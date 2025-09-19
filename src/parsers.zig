@@ -1,11 +1,15 @@
-const std = @import("std");
-const mecha = @import("mecha");
-
-const ExprTag = enum { fn_def, assign_expr, bin_expr };
-const Expr = union(ExprTag) {
+const StmtTag = enum { fn_def, assign_stmt, expr };
+const Stmt = union(StmtTag) {
     fn_def: FnDef,
-    assign_expr: AssignExpr,
+    assign_stmt: AssignStmt,
+    expr: Expr,
+};
+
+const ExprTag = enum { tern_expr, bin_expr, atomic };
+const Expr = union(ExprTag) {
+    tern_expr: TernExpr,
     bin_expr: BinExpr,
+    atomic: Atomic,
 };
 
 // Functions:
@@ -16,15 +20,15 @@ const FnDef = struct { name: []const u8, params: [][]const u8, body: []Expr };
 
 // Assignment expression:
 
-const AssignExpr = struct { name: []const u8, value: Atomic };
+const AssignStmt = struct { name: []const u8, value: Atomic };
 
-const assign_expr = mecha.combine(.{
+pub const assign_stmt = mecha.combine(.{
     token(ident),
     token(mecha.utf8.char('=')).discard(),
     token(atomic),
 })
-    .map(mecha.toStruct(AssignExpr))
-    .map(mecha.unionInit(Value, Value.assign_expr));
+    .map(mecha.toStruct(AssignStmt))
+    .map(mecha.unionInit(Stmt, StmtTag.assign_stmt));
 
 const ident = mecha.combine(.{
     mecha.oneOf(.{ mecha.ascii.alphabetic, mecha.ascii.char('_') }),
@@ -66,6 +70,18 @@ pub fn evalBinExpr(parsed: anytype) Atomic {
     }
 
     return switch (bps.op) {
+        .logic_and => switch (bps.lhs) {
+            .boolean => Atomic{ .boolean = bps.lhs.boolean and
+                bps.rhs.boolean },
+            else => @panic("Invalid types for logical operator (and)"),
+        },
+
+        .logic_or => switch (bps.lhs) {
+            .boolean => Atomic{ .boolean = bps.lhs.boolean or
+                bps.rhs.boolean },
+            else => @panic("Invalid types for logical operator or)"),
+        },
+
         .equal => switch (bps.lhs) {
             .float => Atomic{ .boolean = bps.lhs.float == bps.rhs.float },
             .int => Atomic{ .boolean = bps.lhs.int == bps.rhs.int },
@@ -169,16 +185,29 @@ pub fn evalBinExpr(parsed: anytype) Atomic {
     };
 }
 
+// Ternary expression:
+
+const TernExpr = struct { then_br: Expr, cond: Expr, else_br: Expr };
+
+pub fn evalTernExpr(parsed: anytype) Atomic {
+    const tps = mecha.toStruct(TernExpr)(parsed);
+
+    if (std.meta.activeTag(tps.lhs) != std.meta.activeTag(tps.rhs)) {
+        @panic("Operand types mismatch");
+    }
+    return Atomic{ .int = 0 };
+}
+
 // Value (includes assignment and binary expressions, atomics):
 //
 // TODO: Add function declarations/calls.
 
-const ValueTag = enum { assign_expr, bin_expr, atomic };
-const Value = union(ValueTag) {
-    assign_expr: AssignExpr,
-    bin_expr: BinExpr,
-    atomic: Atomic,
-};
+// const ValueTag = enum { assign_expr, bin_expr, atomic };
+// const Value = union(ValueTag) {
+//     assign_expr: AssignExpr,
+//     bin_expr: BinExpr,
+//     atomic: Atomic,
+// };
 
 // Atomics:
 
@@ -266,12 +295,16 @@ fn toAtomic(comptime tag: AtomicTag) fn (anytype) Atomic {
 // Binary operaions:
 
 const BinOp = enum {
+    logic_and,
+    logic_or,
+
     equal,
     not_equal,
     greater_equal_than,
     less_equal_than,
     greater_than,
     less_than,
+
     add,
     subtr,
     mult,
@@ -281,12 +314,16 @@ const BinOp = enum {
 };
 
 const bin_op = mecha.oneOf(.{
+    regOp("and", .logic_and),
+    regOp("or", .logic_or),
+
     regOp("==", .equal),
     regOp("!=", .not_equal),
     regOp(">=", .greater_equal_than),
     regOp("<=", .less_equal_than),
     regOp(">", .greater_than),
     regOp("<", .less_than),
+
     regOp("+", .add),
     regOp("-", .subtr),
     regOp("*", .mult),
@@ -311,3 +348,46 @@ const ws = mecha.oneOf(.{
     mecha.utf8.char(0x000A),
     mecha.utf8.char(0x000D),
 }).many(.{ .collect = false });
+
+test "Atomic.int" {
+    try isOk(atomic, "-2");
+    try isOk(bin_expr, "2 + 2 * 3");
+    try isOk(bin_expr, "(2 + 2) * 3");
+    try isOk(bin_expr, "2 == 2");
+}
+
+test "Atomic.float" {
+    try isOk(atomic, "3.14");
+    try isOk(atomic, "-3.14");
+    try isOk(bin_expr, "2.3 + 4.5 * 6.7");
+    try isOk(bin_expr, "(2.3 + 4.5) * 6.7");
+    try isOk(bin_expr, "2.3 == 3.4");
+}
+
+test "Atomic.boolean" {
+    try isOk(atomic, "True");
+    try isOk(atomic, "False");
+    try isOk(bin_expr, "True == True");
+    try isOk(bin_expr, "False != False");
+}
+
+test "Atomic.str" {
+    try isOk(atomic, "\"String\"");
+    try isOk(bin_expr, "\"String\" == \"String\"");
+    try isOk(bin_expr, "\"String\" != \"Other string\"");
+}
+
+test "bin_expr" {
+    try isOk(bin_expr, "1 < ((2 + 2) > (3 + 3)) != True");
+}
+
+fn isOk(parser: mecha.Parser(Atomic), in: []const u8) !void {
+    const gpa = std.testing.allocator;
+
+    const res = parser.parse(gpa, in) catch @panic("test failure");
+    try std.testing.expectEqualStrings("", in[res.index..]);
+}
+
+const std = @import("std");
+
+const mecha = @import("mecha");

@@ -132,17 +132,6 @@ const Tokenizer = struct {
                 };
             },
 
-            '+' => result.tag = .plus,
-            '-' => result.tag = .minus,
-            '*' => result.tag = .star,
-            '/' => result.tag = .slash,
-            '(' => result.tag = .left_paren,
-            ')' => result.tag = .right_paren,
-            '{' => result.tag = .left_brace,
-            '}' => result.tag = .right_brace,
-            ',' => result.tag = .comma,
-            ';' => result.tag = .semicolon,
-
             '=' => {
                 switch (self.source[self.index]) {
                     '=' => {
@@ -180,6 +169,17 @@ const Tokenizer = struct {
                 }
             },
 
+            '+' => result.tag = .plus,
+            '-' => result.tag = .minus,
+            '*' => result.tag = .star,
+            '/' => result.tag = .slash,
+            '(' => result.tag = .left_paren,
+            ')' => result.tag = .right_paren,
+            '{' => result.tag = .left_brace,
+            '}' => result.tag = .right_brace,
+            ',' => result.tag = .comma,
+            ';' => result.tag = .semicolon,
+
             else => result = .{ .tag = .eof, .lexeme = "EOF" },
         }
         return result;
@@ -200,23 +200,32 @@ const BinOp = enum {
     greater_or_equal_than,
 };
 
-const BinExpr = struct { left: *Node, op: BinOp, right: *Node };
-const FnCall = struct { fn_name: []const u8, args: std.ArrayList(*Node) };
-const TernExpr = struct { then_expr: *Node, cond: *Node, else_expr: *Node };
-const AssignStmt = struct { name: []const u8, value: *Node };
-const FuncDef = struct {
+const NodeIndex = u32;
+
+const BinExpr = struct { left: NodeIndex, op: BinOp, right: NodeIndex };
+const FnCall = struct { fn_name: []const u8, args_start: u32, args_len: u32 };
+const TernExpr = struct {
+    then: NodeIndex,
+    if_cond: NodeIndex,
+    else_expr: NodeIndex,
+};
+const AssignStmt = struct { name: []const u8, value: NodeIndex };
+
+const FnDef = struct {
     name: []const u8,
-    params: std.ArrayList([]const u8),
-    body: std.ArrayList(*Node),
+    params_start: u32,
+    params_len: u32,
+    body_start: u32,
+    body_len: u32,
 };
 
 const Node = union(enum) {
     int: i64,
     ident: []const u8,
-    bin_expr: *BinExpr,
-    tern_expr: *TernExpr,
-    assign_stmt: *AssignStmt,
-    fn_def: *FuncDef,
+    bin_expr: BinExpr,
+    tern_expr: TernExpr,
+    assign_stmt: AssignStmt,
+    fn_def: FnDef,
     fn_call: FnCall,
 };
 
@@ -226,20 +235,23 @@ const Parser = struct {
     tokenizer: *Tokenizer,
     gpa: std.mem.Allocator,
     current: Token,
+    nodes: std.ArrayList(Node),
+    eib: std.ArrayList(u32),
 
     pub fn init(tokenizer: *Tokenizer, gpa: std.mem.Allocator) !Parser {
-        var p = Parser{
+        var self = Parser{
             .tokenizer = tokenizer,
             .gpa = gpa,
             .current = undefined,
+            .nodes = .empty,
+            .eib = .empty,
         };
-        p.step();
-        return p;
+        self.step();
+        return self;
     }
 
     fn step(self: *Parser) void {
         self.current = self.tokenizer.next();
-        // std.debug.print("{any}\n", .{self.current});
     }
 
     fn expect(self: *Parser, tag: TokenTag) !void {
@@ -247,152 +259,154 @@ const Parser = struct {
         self.step();
     }
 
-    pub fn parseExpression(self: *Parser) anyerror!*Node {
+    fn pushNode(self: *Parser, node: Node) std.mem.Allocator.Error!NodeIndex {
+        try self.nodes.append(self.gpa, node);
+        const index: NodeIndex = @intCast(self.nodes.items.len - 1);
+        return index;
+    }
+
+    pub fn parseExpr(self: *Parser) anyerror!NodeIndex {
         return self.parseAssignStmt();
     }
 
-    fn parsePrimary(self: *Parser) !*Node {
+    fn parsePrimary(self: *Parser) !NodeIndex {
+        var index: NodeIndex = undefined;
         switch (self.current.tag) {
             .num_literal => {
-                const val = try std.fmt.parseInt(i64, self.current.lexeme.?, 10);
-                const n = try self.gpa.create(Node);
-                n.* = Node{ .int = val };
+                const value = try std.fmt.parseInt(i64, self.current.lexeme.?, 10);
+                index = try self.pushNode(Node{ .int = value });
                 self.step();
-                return n;
             },
+
             .ident => {
-                const name = self.current.lexeme;
+                const name = self.current.lexeme.?;
                 self.step();
                 if (self.current.tag == .left_paren) {
                     self.step();
-                    var args = std.ArrayList(*Node).empty;
-                    if (self.current.tag != .right_paren) {
-                        while (true) {
-                            const arg = try self.parseExpression();
-                            try args.append(self.gpa, arg);
-                            if (self.current.tag == .comma) {
-                                self.step();
-                                continue;
-                            } else break;
-                        }
+
+                    const args_start: u32 = @intCast(self.eib.items.len);
+                    var args_len: u32 = 0;
+                    while (self.current.tag != .right_paren and
+                        self.current.tag != .eof)
+                    {
+                        const arg_idx = try self.parseExpr();
+                        try self.eib.append(self.gpa, arg_idx);
+                        args_len += 1;
+                        if (self.current.tag == .right_paren) break;
+                        try self.expect(.comma);
                     }
                     try self.expect(.right_paren);
-                    const n = try self.gpa.create(Node);
-                    n.* = Node{ .fn_call = FnCall{
-                        .fn_name = name.?,
-                        .args = args,
-                    } };
-                    return n;
+
+                    const call = FnCall{
+                        .fn_name = name,
+                        .args_start = args_start,
+                        .args_len = args_len,
+                    };
+                    index = try self.pushNode(Node{ .fn_call = call });
                 } else {
-                    const n = try self.gpa.create(Node);
-                    n.* = Node{ .ident = name.? };
-                    return n;
+                    index = try self.pushNode(Node{ .ident = name });
                 }
             },
+
             .left_paren => {
                 self.step();
-                const inner = try self.parseExpression();
+                index = try self.parseExpr();
                 try self.expect(.right_paren);
-                return inner;
             },
+
             else => return error.ExpectedExpression,
         }
+        return index;
     }
 
-    fn parseMulDiv(self: *Parser) !*Node {
+    fn parseMultDiv(self: *Parser) !NodeIndex {
         var left = try self.parsePrimary();
         while (true) {
-            const op = switch (self.current.tag) {
-                .star => BinOp.mult,
-                .slash => BinOp.div,
+            const op: BinOp = switch (self.current.tag) {
+                .star => .mult,
+                .slash => .div,
                 else => break,
             };
             self.step();
-            const right = try self.parsePrimary();
-            const bin = try self.gpa.create(BinExpr);
-            bin.* = BinExpr{ .left = left, .op = op, .right = right };
-            const n = try self.gpa.create(Node);
-            n.* = Node{ .bin_expr = bin };
-            left = n;
+            const right = try self.parseMultDiv();
+            const bin_expr = BinExpr{ .left = left, .op = op, .right = right };
+            left = try self.pushNode(Node{ .bin_expr = bin_expr });
         }
         return left;
     }
 
-    fn parseAddSub(self: *Parser) !*Node {
-        var left = try self.parseMulDiv();
+    fn parseAddSubtr(self: *Parser) !NodeIndex {
+        var left = try self.parseMultDiv();
         while (true) {
-            const op = switch (self.current.tag) {
-                .plus => BinOp.add,
-                .minus => BinOp.subtr,
+            const op: BinOp = switch (self.current.tag) {
+                .plus => .add,
+                .minus => .subtr,
                 else => break,
             };
             self.step();
-            const right = try self.parseMulDiv();
-            const bin = try self.gpa.create(BinExpr);
-            bin.* = BinExpr{ .left = left, .op = op, .right = right };
-            const n = try self.gpa.create(Node);
-            n.* = Node{ .bin_expr = bin };
-            left = n;
+            const right = try self.parseMultDiv();
+            const bin_expr = BinExpr{ .left = left, .op = op, .right = right };
+            left = try self.pushNode(Node{ .bin_expr = bin_expr });
         }
         return left;
     }
 
-    fn parseComp(self: *Parser) !*Node {
-        var left = try self.parseAddSub();
+    fn parseComp(self: *Parser) !NodeIndex {
+        var left = try self.parseAddSubtr();
         while (true) {
-            const op = switch (self.current.tag) {
-                .double_equal => BinOp.equal,
-                .bang_equal => BinOp.not_equal,
-                .less_than => BinOp.less_than,
-                .less_or_equal_than => BinOp.less_or_equal_than,
-                .greater_than => BinOp.greater_than,
-                .greater_or_equal_than => BinOp.greater_or_equal_than,
+            const op: BinOp = switch (self.current.tag) {
+                .double_equal => .equal,
+                .bang_equal => .not_equal,
+                .less_than => .less_than,
+                .less_or_equal_than => .less_or_equal_than,
+                .greater_than => .greater_than,
+                .greater_or_equal_than => .greater_or_equal_than,
                 else => break,
             };
             self.step();
-            const right = try self.parseAddSub();
-            const bin = try self.gpa.create(BinExpr);
-            bin.* = BinExpr{ .left = left, .op = op, .right = right };
-            const n = try self.gpa.create(Node);
-            n.* = Node{ .bin_expr = bin };
-            left = n;
+            const right = try self.parseAddSubtr();
+            const bin_expr = BinExpr{ .left = left, .op = op, .right = right };
+            left = try self.pushNode(Node{ .bin_expr = bin_expr });
         }
         return left;
     }
 
-    fn parseTernExpr(self: *Parser) !*Node {
-        const then_expr = try self.parseComp();
+    fn parseTernExpr(self: *Parser) !NodeIndex {
+        const then = try self.parseComp();
         if (self.current.tag == .keyword_if) {
             self.step();
-            const cond = try self.parseComp();
+
+            const if_cond = try self.parseComp();
             if (self.current.tag != .keyword_else) return error.ExpectedToken;
             self.step();
+
             const else_expr = try self.parseTernExpr();
-            const tern = try self.gpa.create(TernExpr);
-            tern.* = TernExpr{
-                .then_expr = then_expr,
-                .cond = cond,
+            const tern_expr = TernExpr{
+                .then = then,
+                .if_cond = if_cond,
                 .else_expr = else_expr,
             };
-            const n = try self.gpa.create(Node);
-            n.* = Node{ .tern_expr = tern };
-            return n;
+            return try self.pushNode(Node{ .tern_expr = tern_expr });
         }
-        return then_expr;
+        return then;
     }
 
-    fn parseAssignStmt(self: *Parser) !*Node {
-        const expr = try self.parseTernExpr();
+    fn parseAssignStmt(self: *Parser) !NodeIndex {
+        var expr = try self.parseTernExpr();
         if (self.current.tag == .equal) {
-            switch (expr.*) {
+            const node = self.nodes.items[@intCast(expr)];
+            switch (node) {
                 .ident => |name| {
                     self.step();
                     const rhs = try self.parseAssignStmt();
-                    const a = try self.gpa.create(AssignStmt);
-                    a.* = AssignStmt{ .name = name, .value = rhs };
-                    const n = try self.gpa.create(Node);
-                    n.* = Node{ .assign_stmt = a };
-                    return n;
+                    const assign_stmt = AssignStmt{
+                        .name = name,
+                        .value = rhs,
+                    };
+
+                    expr = try self.pushNode(
+                        Node{ .assign_stmt = assign_stmt },
+                    );
                 },
                 else => return error.ExpectedExpression,
             }
@@ -400,50 +414,57 @@ const Parser = struct {
         return expr;
     }
 
-    fn parseFnDef(self: *Parser) !*Node {
+    fn parseFnDef(self: *Parser) !NodeIndex {
         try self.expect(.keyword_def);
         if (self.current.tag != .ident) return error.ExpectedIdentifier;
-        const name = self.current.lexeme;
+        const name = self.current.lexeme.?;
         self.step();
 
         try self.expect(.left_paren);
-        var params = std.ArrayList([]const u8).empty;
-        if (self.current.tag != .right_paren) {
-            while (true) {
-                if (self.current.tag != .ident) return error.ExpectedIdentifier;
-                try params.append(self.gpa, self.current.lexeme.?);
-                self.step();
-                if (self.current.tag == .comma) {
-                    self.step();
-                    continue;
-                } else break;
-            }
+        const params_start: u32 = @intCast(self.eib.items.len);
+        var params_len: u32 = 0;
+        while (self.current.tag != .right_paren and self.current.tag != .eof) {
+            if (self.current.tag != .ident) return error.ExpectedIdentifier;
+
+            const param_node = Node{ .ident = self.current.lexeme.? };
+            const param_index = try self.pushNode(param_node);
+            try self.eib.append(self.gpa, param_index);
+            params_len += 1;
+            self.step();
+
+            if (self.current.tag == .right_paren) break;
+
+            try self.expect(.comma);
         }
         try self.expect(.right_paren);
 
         try self.expect(.left_brace);
-        var body = std.ArrayList(*Node).empty;
+        const body_start: u32 = @intCast(self.eib.items.len);
+        var body_len: u32 = 0;
         while (self.current.tag != .right_brace and self.current.tag != .eof) {
-            const stmt = try self.parseStmt();
-            try body.append(self.gpa, stmt);
+            const stmt_idx = try self.parseStmt();
+            try self.eib.append(self.gpa, stmt_idx);
+            body_len += 1;
         }
         try self.expect(.right_brace);
 
-        const fd = try self.gpa.create(FuncDef);
-        fd.* = FuncDef{ .name = name.?, .params = params, .body = body };
-        const n = try self.gpa.create(Node);
-        n.* = Node{ .fn_def = fd };
-        return n;
+        const fn_def = FnDef{
+            .name = name,
+            .params_start = params_start,
+            .params_len = params_len,
+            .body_start = body_start,
+            .body_len = body_len,
+        };
+        return try self.pushNode(Node{ .fn_def = fn_def });
     }
 
-    fn parseStmt(self: *Parser) !*Node {
-        switch (self.current.tag) {
-            .keyword_def => return self.parseFnDef(),
-            else => {
-                const expr = try self.parseExpression();
-                try self.expect(.semicolon);
-                return expr;
-            },
+    fn parseStmt(self: *Parser) !NodeIndex {
+        if (self.current.tag == .keyword_def) {
+            return self.parseFnDef();
+        } else {
+            const expr = try self.parseExpr();
+            try self.expect(.semicolon);
+            return expr;
         }
     }
 };
@@ -463,45 +484,66 @@ fn opToStr(op: BinOp) []const u8 {
     };
 }
 
-fn printNode(node: *Node, indent: usize) void {
+fn printIndent(indent: usize) void {
     var i: usize = 0;
     while (i < indent) : (i += 1) std.debug.print(" ", .{});
+}
 
-    switch (node.*) {
+fn printNodeByIndex(
+    nodes: []const Node,
+    idx_buf: []const u32,
+    idx: NodeIndex,
+    indent: usize,
+) void {
+    const node = nodes[@intCast(idx)];
+    printIndent(indent);
+    switch (node) {
         .int => |v| std.debug.print("int {d}\n", .{v}),
         .ident => |s| std.debug.print("ident \"{s}\"\n", .{s}),
+        .bin_expr => |b| {
+            std.debug.print("binary {s}\n", .{opToStr(b.op)});
+            printNodeByIndex(nodes, idx_buf, b.left, indent + 2);
+            printNodeByIndex(nodes, idx_buf, b.right, indent + 2);
+        },
+        .tern_expr => |t| {
+            std.debug.print("ternary\n", .{});
+            printNodeByIndex(nodes, idx_buf, t.then, indent + 2);
+            printNodeByIndex(nodes, idx_buf, t.if_cond, indent + 2);
+            printNodeByIndex(nodes, idx_buf, t.else_expr, indent + 2);
+        },
+        .assign_stmt => |a| {
+            std.debug.print("assign {s}\n", .{a.name});
+            printNodeByIndex(nodes, idx_buf, a.value, indent + 2);
+        },
         .fn_call => |c| {
             std.debug.print("call {s}(\n", .{c.fn_name});
-            for (c.args.items) |arg| printNode(arg, indent + 2);
-            var j: usize = 0;
-            while (j < indent) : (j += 1) std.debug.print(" ", .{});
+            const start: usize = @intCast(c.args_start);
+            const end = start + @as(usize, c.args_len);
+            var i: usize = start;
+            while (i < end) : (i += 1) {
+                printNodeByIndex(nodes, idx_buf, idx_buf[i], indent + 2);
+            }
+            printIndent(indent);
             std.debug.print(")\n", .{});
         },
-        .bin_expr => |bptr| {
-            std.debug.print("binary {s}\n", .{opToStr(bptr.op)});
-            printNode(bptr.left, indent + 2);
-            printNode(bptr.right, indent + 2);
-        },
-        .tern_expr => |tptr| {
-            std.debug.print("ternary\n", .{});
-            printNode(tptr.then_expr, indent + 2);
-            printNode(tptr.cond, indent + 2);
-            printNode(tptr.else_expr, indent + 2);
-        },
-        .assign_stmt => |aptr| {
-            std.debug.print("assign {s}\n", .{aptr.name});
-            printNode(aptr.value, indent + 2);
-        },
-        .fn_def => |fptr| {
-            std.debug.print("func {s}(", .{fptr.name});
-            for (fptr.params.items, 0..) |p, idx| {
-                if (idx != 0) std.debug.print(", ", .{});
-                std.debug.print("{s}", .{p});
+        .fn_def => |f| {
+            std.debug.print("func {s}(\n", .{f.name});
+            const pstart: usize = @intCast(f.params_start);
+            const pend = pstart + @as(usize, f.params_len);
+            var i: usize = pstart;
+            while (i < pend) : (i += 1) {
+                const param_idx = idx_buf[i];
+                const pn = nodes[@as(usize, param_idx)];
+                std.debug.print("  param: {s}\n", .{pn.ident});
             }
             std.debug.print(") {{\n", .{});
-            for (fptr.body.items) |stmt| printNode(stmt, indent + 2);
-            var j: usize = 0;
-            while (j < indent) : (j += 1) std.debug.print(" ", .{});
+            const bstart = @as(usize, f.body_start);
+            const bend = bstart + @as(usize, f.body_len);
+            i = bstart;
+            while (i < bend) : (i += 1) {
+                printNodeByIndex(nodes, idx_buf, idx_buf[i], indent + 2);
+            }
+            printIndent(indent);
             std.debug.print("}}\n", .{});
         },
     }
@@ -518,24 +560,26 @@ pub fn main() !void {
         \\a = 1 + 2 * 3 >= 0;
         \\b = a if a > 3 else 0;
         \\def add(x, y) {
-        \\    sum = x + y;
-        \\    sum;
+        \\    x + y;
         \\}
-        \\c = add(b, 4);
+        \\c = add(a, b);
     ;
 
     var tokenizer = Tokenizer.init(src);
     var parser = try Parser.init(&tokenizer, gpa);
 
-    var program = std.ArrayList(*Node).empty;
+    var program_indices: std.ArrayList(u32) = .empty;
     while (parser.current.tag != .eof) {
-        const stmt = try parser.parseStmt();
-        try program.append(gpa, stmt);
+        const stmt_index = try parser.parseStmt();
+        try program_indices.append(gpa, stmt_index);
     }
 
-    std.debug.print("Parsed AST:\n", .{});
-    for (program.items) |stmt| {
-        printNode(stmt, 0);
+    std.debug.print("Parsed AST (index-backed):\n", .{});
+    const nodes_slice = parser.nodes.items;
+    const eib_slice = parser.eib.items;
+
+    for (program_indices.items) |node_index| {
+        printNodeByIndex(nodes_slice, eib_slice, node_index, 0);
         std.debug.print("---\n", .{});
     }
 }

@@ -3,7 +3,7 @@ const std = @import("std");
 const TokenTag = enum {
     eof,
     invalid,
-    ident,
+    identifier,
     num_literal,
     plus,
     minus,
@@ -27,8 +27,8 @@ const TokenTag = enum {
     keyword_else,
 
     pub fn getLexeme(tag: TokenTag) ?[]const u8 {
-        switch (tag) {
-            .eof, .invalid, .ident, .num_literal => null,
+        return switch (tag) {
+            .eof, .invalid, .identifier, .num_literal => null,
             .plus => "+",
             .minus => "-",
             .star => "*",
@@ -49,7 +49,7 @@ const TokenTag = enum {
             .keyword_def => "def",
             .keyword_if => "if",
             .keyword_else => "else",
-        }
+        };
     }
 };
 
@@ -114,7 +114,7 @@ const Tokenizer = struct {
                 }
                 const lexeme = self.source[start..self.index];
                 if (Token.getKeyword(lexeme)) |tag| result.tag = tag else {
-                    result = Token{ .tag = .ident, .lexeme = lexeme };
+                    result = Token{ .tag = .identifier, .lexeme = lexeme };
                 }
             },
 
@@ -173,6 +173,7 @@ const Tokenizer = struct {
             '-' => result.tag = .minus,
             '*' => result.tag = .star,
             '/' => result.tag = .slash,
+
             '(' => result.tag = .left_paren,
             ')' => result.tag = .right_paren,
             '{' => result.tag = .left_brace,
@@ -183,6 +184,13 @@ const Tokenizer = struct {
             else => result = .{ .tag = .eof, .lexeme = "EOF" },
         }
         return result;
+    }
+
+    pub fn peek(self: *Tokenizer) Token {
+        const original_index = self.index;
+        const token = self.next();
+        self.index = original_index;
+        return token;
     }
 };
 
@@ -202,9 +210,9 @@ const BinOp = enum {
 
 const NodeIndex = u32;
 
-const BinExpr = struct { left: NodeIndex, op: BinOp, right: NodeIndex };
+const BinExpr = struct { lhs: NodeIndex, op: BinOp, rhs: NodeIndex };
 const FnCall = struct { fn_name: []const u8, args_start: u32, args_len: u32 };
-const TernExpr = struct {
+const CondExpr = struct {
     then: NodeIndex,
     if_cond: NodeIndex,
     else_expr: NodeIndex,
@@ -213,17 +221,17 @@ const AssignStmt = struct { name: []const u8, value: NodeIndex };
 
 const FnDef = struct {
     name: []const u8,
-    params_start: u32,
-    params_len: u32,
+    args_start: u32,
+    args_len: u32,
     body_start: u32,
     body_len: u32,
 };
 
 const Node = union(enum) {
     int: i64,
-    ident: []const u8,
+    identifier: []const u8,
     bin_expr: BinExpr,
-    tern_expr: TernExpr,
+    cond_expr: CondExpr,
     assign_stmt: AssignStmt,
     fn_def: FnDef,
     fn_call: FnCall,
@@ -252,6 +260,7 @@ const Parser = struct {
 
     fn step(self: *Parser) void {
         self.current = self.tokenizer.next();
+        std.debug.print("{any}\n", .{self.current});
     }
 
     fn expect(self: *Parser, tag: TokenTag) !void {
@@ -266,61 +275,68 @@ const Parser = struct {
     }
 
     pub fn parseExpr(self: *Parser) anyerror!NodeIndex {
-        return self.parseAssignStmt();
+        return self.parseAssignExpr();
+    }
+
+    fn parseNumLiteral(self: *Parser) !NodeIndex {
+        const value = try std.fmt.parseInt(i64, self.current.lexeme.?, 10);
+        const index = try self.pushNode(Node{ .int = value });
+        self.step();
+        return index;
+    }
+
+    fn parseIdentifier(self: *Parser) !NodeIndex {
+        var index: NodeIndex = undefined;
+        const name = self.current.lexeme.?;
+        self.step();
+        if (self.current.tag == .left_paren) {
+            self.step();
+
+            const args_start: u32 = @intCast(self.eib.items.len);
+            var args_len: u32 = 0;
+            while (self.current.tag != .right_paren and
+                self.current.tag != .eof)
+            {
+                const arg_idx = try self.parseExpr();
+                try self.eib.append(self.gpa, arg_idx);
+                args_len += 1;
+                if (self.current.tag == .right_paren) break;
+                try self.expect(.comma);
+            }
+            try self.expect(.right_paren);
+
+            const call = FnCall{
+                .fn_name = name,
+                .args_start = args_start,
+                .args_len = args_len,
+            };
+            index = try self.pushNode(Node{ .fn_call = call });
+        } else {
+            index = try self.pushNode(Node{ .identifier = name });
+        }
+        return index;
+    }
+
+    fn parseBoxed(self: *Parser) !NodeIndex {
+        self.step();
+        const index = try self.parseExpr();
+        try self.expect(.right_paren);
+        return index;
     }
 
     fn parsePrimary(self: *Parser) !NodeIndex {
         var index: NodeIndex = undefined;
         switch (self.current.tag) {
-            .num_literal => {
-                const value = try std.fmt.parseInt(i64, self.current.lexeme.?, 10);
-                index = try self.pushNode(Node{ .int = value });
-                self.step();
-            },
-
-            .ident => {
-                const name = self.current.lexeme.?;
-                self.step();
-                if (self.current.tag == .left_paren) {
-                    self.step();
-
-                    const args_start: u32 = @intCast(self.eib.items.len);
-                    var args_len: u32 = 0;
-                    while (self.current.tag != .right_paren and
-                        self.current.tag != .eof)
-                    {
-                        const arg_idx = try self.parseExpr();
-                        try self.eib.append(self.gpa, arg_idx);
-                        args_len += 1;
-                        if (self.current.tag == .right_paren) break;
-                        try self.expect(.comma);
-                    }
-                    try self.expect(.right_paren);
-
-                    const call = FnCall{
-                        .fn_name = name,
-                        .args_start = args_start,
-                        .args_len = args_len,
-                    };
-                    index = try self.pushNode(Node{ .fn_call = call });
-                } else {
-                    index = try self.pushNode(Node{ .ident = name });
-                }
-            },
-
-            .left_paren => {
-                self.step();
-                index = try self.parseExpr();
-                try self.expect(.right_paren);
-            },
-
+            .identifier => index = try self.parseIdentifier(),
+            .num_literal => index = try self.parseNumLiteral(),
+            .left_paren => index = try self.parseBoxed(),
             else => return error.ExpectedExpression,
         }
         return index;
     }
 
     fn parseMultDiv(self: *Parser) !NodeIndex {
-        var left = try self.parsePrimary();
+        var lhs = try self.parsePrimary();
         while (true) {
             const op: BinOp = switch (self.current.tag) {
                 .star => .mult,
@@ -328,15 +344,15 @@ const Parser = struct {
                 else => break,
             };
             self.step();
-            const right = try self.parseMultDiv();
-            const bin_expr = BinExpr{ .left = left, .op = op, .right = right };
-            left = try self.pushNode(Node{ .bin_expr = bin_expr });
+            const rhs = try self.parseMultDiv();
+            const bin_expr = BinExpr{ .lhs = lhs, .op = op, .rhs = rhs };
+            lhs = try self.pushNode(Node{ .bin_expr = bin_expr });
         }
-        return left;
+        return lhs;
     }
 
     fn parseAddSubtr(self: *Parser) !NodeIndex {
-        var left = try self.parseMultDiv();
+        var lhs = try self.parseMultDiv();
         while (true) {
             const op: BinOp = switch (self.current.tag) {
                 .plus => .add,
@@ -344,15 +360,15 @@ const Parser = struct {
                 else => break,
             };
             self.step();
-            const right = try self.parseMultDiv();
-            const bin_expr = BinExpr{ .left = left, .op = op, .right = right };
-            left = try self.pushNode(Node{ .bin_expr = bin_expr });
+            const rhs = try self.parseMultDiv();
+            const bin_expr = BinExpr{ .lhs = lhs, .op = op, .rhs = rhs };
+            lhs = try self.pushNode(Node{ .bin_expr = bin_expr });
         }
-        return left;
+        return lhs;
     }
 
     fn parseComp(self: *Parser) !NodeIndex {
-        var left = try self.parseAddSubtr();
+        var lhs = try self.parseAddSubtr();
         while (true) {
             const op: BinOp = switch (self.current.tag) {
                 .double_equal => .equal,
@@ -364,14 +380,14 @@ const Parser = struct {
                 else => break,
             };
             self.step();
-            const right = try self.parseAddSubtr();
-            const bin_expr = BinExpr{ .left = left, .op = op, .right = right };
-            left = try self.pushNode(Node{ .bin_expr = bin_expr });
+            const rhs = try self.parseAddSubtr();
+            const bin_expr = BinExpr{ .lhs = lhs, .op = op, .rhs = rhs };
+            lhs = try self.pushNode(Node{ .bin_expr = bin_expr });
         }
-        return left;
+        return lhs;
     }
 
-    fn parseTernExpr(self: *Parser) !NodeIndex {
+    fn parseCondExpr(self: *Parser) !NodeIndex {
         const then = try self.parseComp();
         if (self.current.tag == .keyword_if) {
             self.step();
@@ -380,60 +396,59 @@ const Parser = struct {
             if (self.current.tag != .keyword_else) return error.ExpectedToken;
             self.step();
 
-            const else_expr = try self.parseTernExpr();
-            const tern_expr = TernExpr{
+            const else_expr = try self.parseCondExpr();
+            const cond_expr = CondExpr{
                 .then = then,
                 .if_cond = if_cond,
                 .else_expr = else_expr,
             };
-            return try self.pushNode(Node{ .tern_expr = tern_expr });
+            return try self.pushNode(Node{ .cond_expr = cond_expr });
         }
         return then;
     }
 
-    fn parseAssignStmt(self: *Parser) !NodeIndex {
-        var expr = try self.parseTernExpr();
+    fn parseAssignExpr(self: *Parser) !NodeIndex {
+        var vn = try self.parseIdentifier();
         if (self.current.tag == .equal) {
-            const node = self.nodes.items[@intCast(expr)];
+            const node = self.nodes.items[@intCast(vn)];
             switch (node) {
-                .ident => |name| {
+                .identifier => |name| {
                     self.step();
-                    const rhs = try self.parseAssignStmt();
+                    const value = try self.parseAssignExpr();
                     const assign_stmt = AssignStmt{
                         .name = name,
-                        .value = rhs,
+                        .value = value,
                     };
 
-                    expr = try self.pushNode(
-                        Node{ .assign_stmt = assign_stmt },
-                    );
+                    vn = try self.pushNode(Node{ .assign_stmt = assign_stmt });
                 },
                 else => return error.ExpectedExpression,
             }
         }
-        return expr;
+        return vn;
     }
 
     fn parseFnDef(self: *Parser) !NodeIndex {
         try self.expect(.keyword_def);
-        if (self.current.tag != .ident) return error.ExpectedIdentifier;
+        if (self.current.tag != .identifier) return error.ExpectedIdentifier;
         const name = self.current.lexeme.?;
         self.step();
 
         try self.expect(.left_paren);
-        const params_start: u32 = @intCast(self.eib.items.len);
-        var params_len: u32 = 0;
+        const args_start: u32 = @intCast(self.eib.items.len);
+        var args_len: u32 = 0;
         while (self.current.tag != .right_paren and self.current.tag != .eof) {
-            if (self.current.tag != .ident) return error.ExpectedIdentifier;
+            if (self.current.tag != .identifier) {
+                return error.ExpectedIdentifier;
+            }
 
-            const param_node = Node{ .ident = self.current.lexeme.? };
-            const param_index = try self.pushNode(param_node);
-            try self.eib.append(self.gpa, param_index);
-            params_len += 1;
+            const arg_node = Node{ .identifier = self.current.lexeme.? };
+            const arg_index = try self.pushNode(arg_node);
+            try self.eib.append(self.gpa, arg_index);
+            args_len += 1;
             self.step();
 
             if (self.current.tag == .right_paren) break;
-
             try self.expect(.comma);
         }
         try self.expect(.right_paren);
@@ -442,30 +457,31 @@ const Parser = struct {
         const body_start: u32 = @intCast(self.eib.items.len);
         var body_len: u32 = 0;
         while (self.current.tag != .right_brace and self.current.tag != .eof) {
-            const stmt_idx = try self.parseStmt();
-            try self.eib.append(self.gpa, stmt_idx);
+            const stmt_index = try self.parseStmt();
+            try self.eib.append(self.gpa, stmt_index);
             body_len += 1;
         }
         try self.expect(.right_brace);
 
         const fn_def = FnDef{
             .name = name,
-            .params_start = params_start,
-            .params_len = params_len,
+            .args_start = args_start,
+            .args_len = args_len,
             .body_start = body_start,
             .body_len = body_len,
         };
         return try self.pushNode(Node{ .fn_def = fn_def });
     }
 
-    fn parseStmt(self: *Parser) !NodeIndex {
+    fn parseStmt(self: *Parser) anyerror!NodeIndex {
+        var result: NodeIndex = undefined;
         if (self.current.tag == .keyword_def) {
-            return self.parseFnDef();
+            result = try self.parseFnDef();
         } else {
-            const expr = try self.parseExpr();
+            result = try self.parseExpr();
             try self.expect(.semicolon);
-            return expr;
         }
+        return result;
     }
 };
 
@@ -499,13 +515,13 @@ fn printNodeByIndex(
     printIndent(indent);
     switch (node) {
         .int => |v| std.debug.print("int {d}\n", .{v}),
-        .ident => |s| std.debug.print("ident \"{s}\"\n", .{s}),
+        .identifier => |s| std.debug.print("ident \"{s}\"\n", .{s}),
         .bin_expr => |b| {
             std.debug.print("binary {s}\n", .{opToStr(b.op)});
-            printNodeByIndex(nodes, idx_buf, b.left, indent + 2);
-            printNodeByIndex(nodes, idx_buf, b.right, indent + 2);
+            printNodeByIndex(nodes, idx_buf, b.lhs, indent + 2);
+            printNodeByIndex(nodes, idx_buf, b.rhs, indent + 2);
         },
-        .tern_expr => |t| {
+        .cond_expr => |t| {
             std.debug.print("ternary\n", .{});
             printNodeByIndex(nodes, idx_buf, t.then, indent + 2);
             printNodeByIndex(nodes, idx_buf, t.if_cond, indent + 2);
@@ -528,13 +544,13 @@ fn printNodeByIndex(
         },
         .fn_def => |f| {
             std.debug.print("func {s}(\n", .{f.name});
-            const pstart: usize = @intCast(f.params_start);
-            const pend = pstart + @as(usize, f.params_len);
+            const pstart: usize = @intCast(f.args_start);
+            const pend = pstart + @as(usize, f.args_len);
             var i: usize = pstart;
             while (i < pend) : (i += 1) {
                 const param_idx = idx_buf[i];
                 const pn = nodes[@as(usize, param_idx)];
-                std.debug.print("  param: {s}\n", .{pn.ident});
+                std.debug.print("  param: {s}\n", .{pn.identifier});
             }
             std.debug.print(") {{\n", .{});
             const bstart = @as(usize, f.body_start);

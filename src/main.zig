@@ -4,7 +4,7 @@ const Tokenizer = @import("Tokenizer.zig");
 const Parser = @import("Parser.zig");
 const Node = Parser.Node;
 const NodeIndex = Parser.NodeIndex;
-const debug = @import("debug.zig");
+const Renderer = @import("Renderer.zig");
 
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -32,11 +32,15 @@ pub fn main() !void {
     }
 
     std.debug.print("Parsed AST (index-backed):\n", .{});
-    const nodes_slice = parser.nodes.items;
-    const eib_slice = parser.eib.items;
+    const nodes = parser.nodes.items;
+    const eib = parser.eib.items;
+    var buffer: [1024]u8 = undefined;
+    const writer = std.Progress.lockStderrWriter(&buffer);
+    defer std.Progress.unlockStderrWriter();
 
+    var renderer = Renderer.init(writer, nodes, eib);
     for (program_indices.items) |node_index| {
-        debug.printNodes(nodes_slice, eib_slice, node_index, 0);
         std.debug.print("\n", .{});
+        try renderer.render(node_index);
     }
 }

@@ -6,111 +6,108 @@ pub fn init(source: []const u8) Tokenizer {
     return Tokenizer{ .source = source, .index = 0 };
 }
 
-pub fn peekNext(self: *Tokenizer) Token {
-    const init_index = self.index;
-    const token = self.next();
-    self.index = init_index;
+pub fn peekNext(t: *Tokenizer) Token {
+    const init_index = t.index;
+    const token = t.next();
+    t.index = init_index;
     return token;
 }
 
-pub fn next(self: *Tokenizer) Token {
-    var result: Token = .{ .tag = .invalid };
-    self.skipWhitespaces();
-    if (self.index >= self.source.len) {
+pub fn next(t: *Tokenizer) Token {
+    var res: Token = .{ .tag = .invalid };
+    t.skipWhitespaces();
+    if (t.index >= t.source.len) {
         return Token{ .tag = .eof, .lexeme = "EOF" };
     }
 
-    const start = self.index;
-    const char = self.step().?;
+    const start = t.index;
+    const c = t.step().?;
 
     // identifiers and keywords
-    switch (char) {
+    switch (c) {
         'a'...'z', 'A'...'Z', '_' => {
-            while (self.index < self.source.len) {
-                const sub = self.source[self.index];
+            while (t.index < t.source.len) {
+                const sub = t.source[t.index];
                 switch (sub) {
-                    'a'...'z', 'A'...'Z', '0'...'9', '_' => self.index += 1,
+                    'a'...'z', 'A'...'Z', '0'...'9', '_' => t.index += 1,
                     else => break,
                 }
             }
-            const lexeme = self.source[start..self.index];
-            if (Token.getKeyword(lexeme)) |tag| result.tag = tag else {
-                result = Token{ .tag = .identifier, .lexeme = lexeme };
+            const lexeme = t.source[start..t.index];
+            if (Token.getKeyword(lexeme)) |tag| res.tag = tag else {
+                res = Token{ .tag = .identifier, .lexeme = lexeme };
             }
         },
 
         '0'...'9' => {
-            while (self.index < self.source.len) {
-                const digit = self.source[self.index];
+            while (t.index < t.source.len) {
+                const digit = t.source[t.index];
                 switch (digit) {
-                    '0'...'9' => self.index += 1,
+                    '0'...'9' => t.index += 1,
                     else => break,
                 }
             }
-            result = Token{
+            res = Token{
                 .tag = .int_literal,
-                .lexeme = self.source[start..self.index],
+                .lexeme = t.source[start..t.index],
             };
         },
 
         '"' => {
-            self.index += 1;
-            while (self.index < self.source.len and
-                self.source[self.index] != '"')
-            {
-                self.index += 1;
-            }
-            self.index += 1;
-            result = Token{
+            t.index += 1;
+            while (t.index < t.source.len and
+                t.source[t.index] != '"') t.index += 1;
+            t.index += 1;
+            res = Token{
                 .tag = .string_literal,
-                .lexeme = self.source[start + 1 .. self.index - 1],
+                .lexeme = t.source[start + 1 .. t.index - 1],
             };
         },
 
-        '+' => result.tag = .plus,
-        '-' => result.tag = .minus,
-        '*' => result.tag = .star,
-        '/' => result.tag = .slash,
+        '+' => res.tag = .plus,
+        '-' => res.tag = .minus,
+        '*' => res.tag = .star,
+        '/' => res.tag = .slash,
 
-        '=' => switch (self.source[self.index]) {
+        '=' => switch (t.source[t.index]) {
             '=' => {
-                result.tag = .double_equal;
-                self.index += 1;
+                res.tag = .double_equal;
+                t.index += 1;
             },
-            else => result.tag = .equal,
+            else => res.tag = .equal,
         },
-        '!' => switch (self.source[self.index]) {
+        '!' => switch (t.source[t.index]) {
             '=' => {
-                result.tag = .bang_equal;
-                self.index += 1;
+                res.tag = .bang_equal;
+                t.index += 1;
             },
-            else => result.tag = .invalid,
+            else => res.tag = .invalid,
         },
-        '<' => switch (self.source[self.index]) {
+        '<' => switch (t.source[t.index]) {
             '=' => {
-                result.tag = .less_or_equal_than;
-                self.index += 1;
+                res.tag = .less_or_equal_than;
+                t.index += 1;
             },
-            else => result.tag = .less_than,
+            else => res.tag = .less_than,
         },
-        '>' => switch (self.source[self.index]) {
+        '>' => switch (t.source[t.index]) {
             '=' => {
-                result.tag = .greater_or_equal_than;
-                self.index += 1;
+                res.tag = .greater_or_equal_than;
+                t.index += 1;
             },
-            else => result.tag = .greater_than,
+            else => res.tag = .greater_than,
         },
 
-        '(' => result.tag = .left_paren,
-        ')' => result.tag = .right_paren,
-        '{' => result.tag = .left_brace,
-        '}' => result.tag = .right_brace,
-        ',' => result.tag = .comma,
-        ';' => result.tag = .semicolon,
+        '(' => res.tag = .left_paren,
+        ')' => res.tag = .right_paren,
+        '{' => res.tag = .left_brace,
+        '}' => res.tag = .right_brace,
+        ',' => res.tag = .comma,
+        ';' => res.tag = .semicolon,
 
-        else => result = .{ .tag = .eof, .lexeme = "EOF" },
+        else => res = .{ .tag = .eof, .lexeme = "EOF" },
     }
-    return result;
+    return res;
 }
 
 pub const Token = struct {
@@ -159,18 +156,18 @@ pub const Token = struct {
     }
 };
 
-fn skipWhitespaces(self: *Tokenizer) void {
-    while (self.index < self.source.len) {
-        switch (self.source[self.index]) {
-            ' ', '\t', '\n', '\r' => self.index += 1,
+fn skipWhitespaces(t: *Tokenizer) void {
+    while (t.index < t.source.len) {
+        switch (t.source[t.index]) {
+            ' ', '\t', '\n', '\r' => t.index += 1,
             else => break,
         }
     }
 }
 
-fn step(self: *Tokenizer) ?u8 {
-    if (self.index >= self.source.len) return null;
-    const char = self.source[self.index];
-    self.index += 1;
+fn step(t: *Tokenizer) ?u8 {
+    if (t.index >= t.source.len) return null;
+    const char = t.source[t.index];
+    t.index += 1;
     return char;
 }

@@ -38,3 +38,95 @@ the_list = [0, {"one": 1}, 2 + 3];
 
 zero = the_list[a_list[0]];
 ```
+And there is the AST the program would produce:
+```
+Parsed AST (index-backed):
+
+AssignStmt(name: an_int)
+    Int(1)
+
+AssignStmt(name: the_int)
+    Int(23)
+
+FnDef(name: add)
+    Args:
+        Arg: a
+        Arg: b
+    Body:
+        AssignStmt(name: sum)
+            Binxpr(+)
+                Identifier(a)
+                Identifier(b)
+        ReturnStmt:
+            Identifier(sum)
+
+AssignStmt(name: int_sum)
+    FnCall(name: add)
+        Args:
+            Identifier(a_int)
+            Identifier(the_int)
+
+CondExpr
+    Then:
+        FnCall(name: print)
+            Args:
+                String("Success")
+    If:
+        Binxpr(>)
+            Identifier(c)
+            Int(0)
+    Else:
+        FnCall(name: print)
+            Args:
+                Int(0)
+
+CondExpr
+    Then:
+        Int(0)
+    If:
+        Binxpr(and)
+            Binxpr(-)
+                Identifier(an_int)
+                Identifier(the_int)
+            Binxpr(-)
+                Identifier(the_int)
+                Identifier(an_int)
+    Else:
+        Binxpr(or)
+            Identifier(int_sum)
+            String("Huh?")
+
+AssignStmt(name: a_list)
+    List
+        Int(1)
+        Int(2)
+        Int(3)
+
+AssignStmt(name: a_dict)
+    Dictionary
+        Pair
+            String("integer")
+            Int(1)
+        Pair
+            String("list")
+            List
+                Int(2)
+                Int(3)
+
+AssignStmt(name: the_list)
+    List
+        Int(0)
+        String("one")
+        Int(1)
+
+AssignStmt(name: zero)
+    IndexExpr
+        Target:
+            Identifier(the_list)
+        Index:
+            IndexExpr
+                Target:
+                    Identifier(a_list)
+                Index:
+                    Int(0)
+```

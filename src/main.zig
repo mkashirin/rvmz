@@ -7,23 +7,29 @@ const NodeIndex = Parser.NodeIndex;
 const Renderer = @import("Renderer.zig");
 
 pub fn main() !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
     defer arena.deinit();
     const gpa = arena.allocator();
 
-    const src =
-        \\a = 1 * 2 + 3 >= 0;
-        \\b = a if a > 3 else 0;
+    const source =
+        \\a = 1;
+        \\b = 23;
         \\def add(x, y) {
         \\    sum = x + y;
-        \\    sum;
+        \\    return sum;
         \\}
         \\c = add(a, b);
-        \\print("Success");
+        \\print("Success") if c > 0 else print(0);
+        \\
+        \\0 if a - b and b - a else c or "c";
+        \\
+        \\a_list = [1, 2, 3];
+        \\a_dict = {"integer": 1, "list": [2, 3]};
+        \\the_list = [0, {"one": 1}, 2 + 3];
     ;
 
-    var tokenizer = Tokenizer.init(src);
-    var parser = try Parser.init(&tokenizer, gpa);
+    var tokenizer: Tokenizer = .init(source);
+    var parser: Parser = try .init(&tokenizer, gpa);
 
     var program_indices: std.ArrayList(u32) = .empty;
     while (parser.current.tag != .eof) {
@@ -39,8 +45,8 @@ pub fn main() !void {
     defer std.Progress.unlockStderrWriter();
 
     var renderer = Renderer.init(writer, nodes, eib);
-    for (program_indices.items) |node_index| {
+    for (program_indices.items) |node| {
         std.debug.print("\n", .{});
-        try renderer.render(node_index);
+        try renderer.render(node);
     }
 }

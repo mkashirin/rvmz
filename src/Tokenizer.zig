@@ -100,10 +100,13 @@ pub fn next(t: *Tokenizer) Token {
 
         '(' => res.tag = .left_paren,
         ')' => res.tag = .right_paren,
+        '[' => res.tag = .left_bracket,
+        ']' => res.tag = .right_bracket,
         '{' => res.tag = .left_brace,
         '}' => res.tag = .right_brace,
         ',' => res.tag = .comma,
         ';' => res.tag = .semicolon,
+        ':' => res.tag = .colon,
 
         else => res = .{ .tag = .eof, .lexeme = "EOF" },
     }
@@ -133,23 +136,31 @@ pub const Token = struct {
         greater_or_equal_than,
         left_paren,
         right_paren,
+        left_bracket,
+        right_bracket,
         left_brace,
         right_brace,
         comma,
         semicolon,
+        colon,
 
         equal,
-        keyword_def,
+        keyword_and,
+        keyword_or,
         keyword_if,
         keyword_else,
+        keyword_def,
+        keyword_return,
     };
 
-    pub const keywords_map =
-        @import("std").StaticStringMap(Tag).initComptime(.{
-            .{ "def", .keyword_def },
-            .{ "if", .keyword_if },
-            .{ "else", .keyword_else },
-        });
+    pub const keywords_map: std.StaticStringMap(Tag) = .initComptime(.{
+        .{ "and", .keyword_and },
+        .{ "or", .keyword_or },
+        .{ "if", .keyword_if },
+        .{ "else", .keyword_else },
+        .{ "def", .keyword_def },
+        .{ "return", .keyword_return },
+    });
 
     pub fn getKeyword(bytes: []const u8) ?Tag {
         return keywords_map.get(bytes);
@@ -171,3 +182,5 @@ fn step(t: *Tokenizer) ?u8 {
     t.index += 1;
     return char;
 }
+
+const std = @import("std");

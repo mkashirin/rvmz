@@ -1,5 +1,5 @@
 // TODO: Add list/dict comprehension, for-loop and binary operators as
-// arguments support, `in` keyword and indexing support.
+// arguments support, `in` keyword.
 
 tokenizer: *Tokenizer,
 gpa: Allocator,
@@ -101,7 +101,7 @@ fn parseFnDef(p: *Parser) !NodeIndex {
     try p.expect(.left_paren);
     const args_start: u32 = @intCast(p.eib.items.len);
     var args_len: u32 = 0;
-    while (p.current.tag != .right_paren and p.current.tag != .eof) {
+    while (p.current.tag != .eof) {
         if (p.current.tag != .identifier) {
             return Error.ExpectedIdentifier;
         }
@@ -230,17 +230,30 @@ fn parseMultDiv(p: *Parser) !NodeIndex {
 }
 
 fn parsePrimary(p: *Parser) !NodeIndex {
-    var index: NodeIndex = undefined;
+    var primary: NodeIndex = undefined;
     switch (p.current.tag) {
-        .identifier => index = try p.parseName(),
-        .int_literal => index = try p.parseIntLiteral(),
-        .string_literal => index = try p.parseStringLiteral(),
-        .left_paren => index = try p.parseBoxed(),
-        .left_bracket => index = try p.parseList(),
-        .left_brace => index = try p.parseDict(),
+        .identifier => primary = try p.parseName(),
+        .int_literal => primary = try p.parseIntLiteral(),
+        .string_literal => primary = try p.parseStringLiteral(),
+        .left_paren => primary = try p.parseBoxed(),
+        .left_bracket => primary = try p.parseList(),
+        .left_brace => primary = try p.parseDictionary(),
         else => return Error.ExpectedExpression,
     }
-    return index;
+    primary = try p.parseIndex(primary);
+    return primary;
+}
+
+fn parseIndex(p: *Parser, target: NodeIndex) !NodeIndex {
+    while (p.current.tag == .left_bracket) {
+        p.step();
+        const index = try p.parseExpr();
+        try p.expect(.right_bracket);
+
+        const index_expr: IndexExpr = .{ .target = target, .index = index };
+        return p.pushNode(Node{ .index_expr = index_expr });
+    }
+    return target;
 }
 
 fn parseName(p: *Parser) !NodeIndex {
@@ -302,7 +315,7 @@ fn parseList(p: *Parser) !NodeIndex {
 
     const elements_start: u32 = @intCast(p.eib.items.len);
     var elements_len: u32 = 0;
-    while (p.current.tag != .right_bracket and p.current.tag != .eof) {
+    while (p.current.tag != .eof) {
         const element_idx = try p.parseExpr();
         try p.eib.append(p.gpa, element_idx);
         elements_len += 1;
@@ -318,7 +331,7 @@ fn parseList(p: *Parser) !NodeIndex {
     return p.pushNode(Node{ .list = list });
 }
 
-fn parseDict(p: *Parser) !NodeIndex {
+fn parseDictionary(p: *Parser) !NodeIndex {
     try p.expect(.left_brace);
 
     var keys: std.ArrayList(u32) = .empty;
@@ -326,10 +339,9 @@ fn parseDict(p: *Parser) !NodeIndex {
     var values: std.ArrayList(u32) = .empty;
     defer values.deinit(p.gpa);
 
-    while (p.current.tag != .right_brace and p.current.tag != .eof) {
+    while (p.current.tag != .eof) {
         const key_index = try p.parseExpr();
         try keys.append(p.gpa, key_index);
-
         try p.expect(.colon);
 
         const value_index = try p.parseExpr();
@@ -346,13 +358,13 @@ fn parseDict(p: *Parser) !NodeIndex {
     const values_start: u32 = @intCast(p.eib.items.len);
     try p.eib.appendSlice(p.gpa, values.items);
 
-    const dict: Dictionary = .{
+    const dictionary: Dictionary = .{
         .keys_start = keys_start,
         .keys_len = @intCast(keys.items.len),
         .vals_start = values_start,
         .vals_len = @intCast(values.items.len),
     };
-    return p.pushNode(Node{ .dictionary = dict });
+    return p.pushNode(Node{ .dictionary = dictionary });
 }
 
 pub const Node = union(enum) {
@@ -367,6 +379,7 @@ pub const Node = union(enum) {
     return_stmt: ReturnStmt,
     list: List,
     dictionary: Dictionary,
+    index_expr: IndexExpr,
 };
 
 pub const ReturnStmt = struct { value: NodeIndex };
@@ -379,6 +392,8 @@ pub const Dictionary = struct {
     vals_start: u32,
     vals_len: u32,
 };
+
+pub const IndexExpr = struct { target: NodeIndex, index: NodeIndex };
 
 pub const BinExpr = struct { lhs: NodeIndex, op: BinOp, rhs: NodeIndex };
 

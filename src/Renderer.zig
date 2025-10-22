@@ -55,6 +55,7 @@ fn renderNode(self: *Self, index: NodeIndex) std.Io.Writer.Error!void {
         .fn_call => |fn_call| try self.renderFnCall(fn_call),
         .list => |list| try self.renderList(list),
         .dictionary => |dictionary| try self.renderDcitionary(dictionary),
+        .index_expr => |index_expr| try self.renderIndexExpr(index_expr),
     }
 }
 
@@ -198,6 +199,26 @@ fn renderDcitionary(self: *Self, node: Parser.Dictionary) !void {
 
         try self.renderNode(self.eib[j]);
         j += 1;
+    }
+}
+
+fn renderIndexExpr(self: *Self, node: Parser.IndexExpr) !void {
+    try self.printIndentedLine("IndexExpr", .{});
+    self.indent();
+    defer self.unindent();
+
+    try self.printIndentedLine("Target:", .{});
+    {
+        self.indent();
+        defer self.unindent();
+        try self.renderNode(node.target);
+    }
+
+    try self.printIndentedLine("Index:", .{});
+    {
+        self.indent();
+        defer self.unindent();
+        try self.renderNode(node.index);
     }
 }
 

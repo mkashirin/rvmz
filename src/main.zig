@@ -33,7 +33,7 @@ pub fn main() !void {
         \\
         \\ zero = the_list[a_list[0]];
         \\
-        \\ for n in a_dict {
+        \\ for n in a_list {
         \\     print(n + 1);
         \\ }
         \\

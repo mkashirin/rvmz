@@ -151,6 +151,8 @@ pub const Token = struct {
         keyword_else,
         keyword_def,
         keyword_return,
+        keyword_for,
+        keyword_in,
     };
 
     pub const keywords_map: std.StaticStringMap(Tag) = .initComptime(.{
@@ -160,6 +162,8 @@ pub const Token = struct {
         .{ "else", .keyword_else },
         .{ "def", .keyword_def },
         .{ "return", .keyword_return },
+        .{ "for", .keyword_for },
+        .{ "in", .keyword_in },
     });
 
     pub fn getKeyword(bytes: []const u8) ?Tag {

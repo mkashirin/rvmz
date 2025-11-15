@@ -56,6 +56,8 @@ fn renderNode(self: *Self, index: NodeIndex) std.Io.Writer.Error!void {
         .list => |list| try self.renderList(list),
         .dictionary => |dictionary| try self.renderDcitionary(dictionary),
         .index_expr => |index_expr| try self.renderIndexExpr(index_expr),
+        .for_stmt => |for_stmt| try self.renderForStmt(for_stmt),
+        .selector_pred => |pred| try self.renderSelectorPred(pred),
     }
 }
 
@@ -222,6 +224,39 @@ fn renderIndexExpr(self: *Self, node: Parser.IndexExpr) !void {
     }
 }
 
+fn renderForStmt(self: *Self, node: Parser.ForStmt) !void {
+    try self.printIndentedLine("ForStmt(var: {s})", .{node.var_name});
+    self.indent();
+    defer self.unindent();
+
+    try self.printIndentedLine("Iterable:", .{});
+    {
+        self.indent();
+        defer self.unindent();
+        try self.renderNode(node.iterable);
+    }
+
+    try self.printIndentedLine("Body:", .{});
+    {
+        self.indent();
+        defer self.unindent();
+        const body_start: usize = @intCast(node.body_start);
+        const body_end = body_start + @as(usize, node.body_len);
+        var i: usize = body_start;
+        while (i < body_end) : (i += 1) {
+            try self.renderNode(self.eib[i]);
+        }
+    }
+}
+
+fn renderSelectorPred(self: *Self, node: Parser.SelectorPred) !void {
+    try self.printIndentedLine("SelectorPred({s})", .{
+        selectorPredLexeme(node),
+    });
+    self.indent();
+    defer self.unindent();
+}
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -229,3 +264,4 @@ const Parser = @import("Parser.zig");
 const Node = Parser.Node;
 const NodeIndex = Parser.NodeIndex;
 const binOpLexeme = Parser.binOpLexeme;
+const selectorPredLexeme = Parser.selectorPredLexeme;

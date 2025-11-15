@@ -32,6 +32,14 @@ pub fn main() !void {
         \\ the_list = [0, {"one": 1}, 2 + 3];
         \\
         \\ zero = the_list[a_list[0]];
+        \\
+        \\ for n in a_dict {
+        \\     print(n + 1);
+        \\ }
+        \\
+        \\ zero_in_the_list = 0 in the_list;
+        \\
+        \\ selector = Select(a_list, the_list, ==);
     ;
 
     var tokenizer: Tokenizer = .init(source);

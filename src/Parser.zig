@@ -1,5 +1,4 @@
-// TODO: Add list/dict comprehension, for-loop and binary operators as
-// arguments support, `in` keyword.
+// TODO: Add list/dict comprehension, collection literals as arguments.
 
 tokenizer: *Tokenizer,
 gpa: Allocator,
@@ -58,6 +57,7 @@ pub fn parseStmt(p: *Parser) Error!NodeIndex {
             else => res = p.parseExpr(),
         },
         .keyword_def => return p.parseFnDef(),
+        .keyword_for => return p.parseForStmt(),
         .keyword_return => {
             p.step();
             const value = try p.parseExpr();
@@ -137,20 +137,49 @@ fn parseFnDef(p: *Parser) !NodeIndex {
     return p.pushNode(Node{ .fn_def = fn_def });
 }
 
+fn parseForStmt(p: *Parser) !NodeIndex {
+    try p.expect(.keyword_for);
+    if (p.current.tag != .identifier) return Error.ExpectedIdentifier;
+    const var_name = p.current.lexeme.?;
+    p.step();
+
+    try p.expect(.keyword_in);
+
+    const iterable = try p.parseExpr();
+
+    try p.expect(.left_brace);
+    const body_start: u32 = @intCast(p.eib.items.len);
+    var body_len: u32 = 0;
+    while (p.current.tag != .right_brace and p.current.tag != .eof) {
+        const stmt_index = try p.parseStmt();
+        try p.eib.append(p.gpa, stmt_index);
+        body_len += 1;
+    }
+    try p.expect(.right_brace);
+
+    const for_stmt: ForStmt = .{
+        .var_name = var_name,
+        .iterable = iterable,
+        .body_start = body_start,
+        .body_len = body_len,
+    };
+    return p.pushNode(Node{ .for_stmt = for_stmt });
+}
+
 pub fn parseExpr(p: *Parser) Error!NodeIndex {
     return p.parseCondExpr();
 }
 
 fn parseCondExpr(p: *Parser) !NodeIndex {
-    const then = try p.parseAndOr();
+    const then = try p.parseAndOrIn();
     if (p.current.tag == .keyword_if) {
         p.step();
 
-        const if_cond = try p.parseAndOr();
+        const if_cond = try p.parseAndOrIn();
         if (p.current.tag != .keyword_else) return Error.ExpectedToken;
         p.step();
 
-        const else_expr = try p.parseAndOr();
+        const else_expr = try p.parseAndOrIn();
         const cond_expr: CondExpr = .{
             .then = then,
             .if_cond = if_cond,
@@ -161,12 +190,13 @@ fn parseCondExpr(p: *Parser) !NodeIndex {
     return then;
 }
 
-fn parseAndOr(p: *Parser) !NodeIndex {
+fn parseAndOrIn(p: *Parser) !NodeIndex {
     var lhs = try p.parseComp();
     while (true) {
         const op: BinOp = switch (p.current.tag) {
             .keyword_and => .logic_and,
             .keyword_or => .logic_or,
+            .keyword_in => .is_in,
             else => break,
         };
         p.step();
@@ -256,6 +286,9 @@ fn parseIndex(p: *Parser, target: NodeIndex) !NodeIndex {
     return target;
 }
 
+/// This function is rather specific. Not only this one handles identifiers and
+/// function calls, it also targets the only language built-in, that is capable
+/// of accepting bare comparison predicates as an argument (`Select` function).
 fn parseName(p: *Parser) !NodeIndex {
     const name = p.current.lexeme.?;
     p.step();
@@ -265,7 +298,23 @@ fn parseName(p: *Parser) !NodeIndex {
         const args_start: u32 = @intCast(p.eib.items.len);
         var args_len: u32 = 0;
         while (p.current.tag != .right_paren and p.current.tag != .eof) {
-            const arg_idx = try p.parseExpr();
+            const arg_idx = p.parseExpr() catch blk: {
+                if (!std.mem.eql(u8, name, "Select") or args_len != 2)
+                    return Error.ExpectedExpression;
+
+                const pred: SelectorPred = switch (p.current.tag) {
+                    .double_equal => .equal_pred,
+                    .bang_equal => .not_equal_pred,
+                    .less_than => .less_than_pred,
+                    .less_or_equal_than => .less_or_equal_than_pred,
+                    .greater_than => .greater_than_pred,
+                    .greater_or_equal_than => .greater_or_equal_than_pred,
+                    else => return Error.ExpectedToken,
+                };
+                p.step();
+
+                break :blk try p.pushNode(Node{ .selector_pred = pred });
+            };
             try p.eib.append(p.gpa, arg_idx);
             args_len += 1;
             if (p.current.tag == .right_paren) break;
@@ -380,6 +429,8 @@ pub const Node = union(enum) {
     list: List,
     dictionary: Dictionary,
     index_expr: IndexExpr,
+    for_stmt: ForStmt,
+    selector_pred: SelectorPred,
 };
 
 pub const ReturnStmt = struct { value: NodeIndex };
@@ -410,8 +461,10 @@ pub fn binOpLexeme(bin_op: BinOp) []const u8 {
         .less_or_equal_than => "<=",
         .greater_than => ">",
         .greater_or_equal_than => ">=",
+
         .logic_and => "and",
         .logic_or => "or",
+        .is_in => "in",
     };
 }
 
@@ -428,6 +481,27 @@ pub const BinOp = enum {
     greater_or_equal_than,
     logic_and,
     logic_or,
+    is_in,
+};
+
+pub fn selectorPredLexeme(pred: SelectorPred) []const u8 {
+    return switch (pred) {
+        .equal_pred => "==",
+        .not_equal_pred => "!=",
+        .less_than_pred => "<",
+        .less_or_equal_than_pred => "<=",
+        .greater_than_pred => ">",
+        .greater_or_equal_than_pred => ">=",
+    };
+}
+
+pub const SelectorPred = enum {
+    equal_pred,
+    not_equal_pred,
+    less_than_pred,
+    less_or_equal_than_pred,
+    greater_than_pred,
+    greater_or_equal_than_pred,
 };
 
 pub const FnCall = struct {
@@ -449,6 +523,13 @@ pub const FnDef = struct {
     name: []const u8,
     args_start: u32,
     args_len: u32,
+    body_start: u32,
+    body_len: u32,
+};
+
+pub const ForStmt = struct {
+    var_name: []const u8,
+    iterable: NodeIndex,
     body_start: u32,
     body_len: u32,
 };

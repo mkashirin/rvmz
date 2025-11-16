@@ -155,5 +155,5 @@ AssignStmt(name: selector)
         Args:
             Identifier(a_list)
             Identifier(the_list)
-            SelectorPred(==
+            SelectorPred(==)
 ```

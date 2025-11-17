@@ -2,7 +2,8 @@
 /// writer. It separates the printing logic from the AST data structures.
 writer: *std.Io.Writer,
 nodes: []const Node,
-eib: []const u32,
+adpb: []const u32,
+csapb: []const u32,
 indent_level: usize,
 const Self = @This();
 const INDENT_SPACES = 4;
@@ -10,12 +11,14 @@ const INDENT_SPACES = 4;
 pub fn init(
     writer: *std.Io.Writer,
     nodes: []const Node,
-    eib: []const u32,
+    adpb: []const u32,
+    csapb: []const u32,
 ) Self {
     return .{
         .writer = writer,
         .nodes = nodes,
-        .eib = eib,
+        .adpb = adpb,
+        .csapb = csapb,
         .indent_level = 0,
     };
 }
@@ -54,6 +57,7 @@ fn renderNode(self: *Self, index: NodeIndex) std.Io.Writer.Error!void {
         .return_stmt => |return_stmt| try self.renderReturnStmt(return_stmt),
         .fn_call => |fn_call| try self.renderFnCall(fn_call),
         .list => |list| try self.renderList(list),
+        .list_comp => |list_comp| try self.renderListComp(list_comp),
         .dictionary => |dictionary| try self.renderDcitionary(dictionary),
         .index_expr => |index_expr| try self.renderIndexExpr(index_expr),
         .for_stmt => |for_stmt| try self.renderForStmt(for_stmt),
@@ -133,9 +137,7 @@ fn renderFnCall(self: *Self, node: Parser.FnCall) !void {
     const start: usize = @intCast(node.args_start);
     const end = start + @as(usize, node.args_len);
     var i: usize = start;
-    while (i < end) : (i += 1) {
-        try self.renderNode(self.eib[i]);
-    }
+    while (i < end) : (i += 1) try self.renderNode(self.csapb[i]);
 }
 
 fn renderFnDef(self: *Self, node: Parser.FnDef) !void {
@@ -150,9 +152,9 @@ fn renderFnDef(self: *Self, node: Parser.FnDef) !void {
         const args_start: usize = @intCast(node.args_start);
         const args_end = args_start + @as(usize, node.args_len);
         var i: usize = args_start;
-        // For FnDef args, the EIB stores an index to a simple identifier node.
+        // For FnDef args, the ADPB stores an index to a simple identifier node.
         while (i < args_end) : (i += 1) {
-            const arg_node_index = self.eib[i];
+            const arg_node_index = self.adpb[i];
             const arg_node = self.nodes[@intCast(arg_node_index)];
             try self.printIndentedLine("Arg: {s}", .{arg_node.identifier});
         }
@@ -165,9 +167,7 @@ fn renderFnDef(self: *Self, node: Parser.FnDef) !void {
         const body_start: usize = @intCast(node.body_start);
         const body_end = body_start + @as(usize, node.body_len);
         var i: usize = body_start;
-        while (i < body_end) : (i += 1) {
-            try self.renderNode(self.eib[i]);
-        }
+        while (i < body_end) : (i += 1) try self.renderNode(self.adpb[i]);
     }
 }
 
@@ -179,8 +179,36 @@ fn renderList(self: *Self, node: Parser.List) !void {
     const start: usize = @intCast(node.elems_start);
     const end = start + @as(usize, node.elems_len);
     var i: usize = start;
-    while (i < end) : (i += 1) {
-        try self.renderNode(self.eib[i]);
+    while (i < end) : (i += 1) try self.renderNode(self.adpb[i]);
+}
+
+fn renderListComp(self: *Self, node: Parser.ListComp) !void {
+    try self.printIndentedLine("ListComp", .{});
+    self.indent();
+    defer self.unindent();
+
+    try self.printIndentedLine("Expr:", .{});
+    {
+        self.indent();
+        defer self.unindent();
+        try self.renderNode(node.expr);
+    }
+
+    try self.printIndentedLine("Variable: {s}", .{node.variable});
+
+    try self.printIndentedLine("Iterable:", .{});
+    {
+        self.indent();
+        defer self.unindent();
+        try self.renderNode(node.iterable);
+    }
+
+    if (node.condition == null) return;
+    try self.printIndentedLine("Iterable:", .{});
+    {
+        self.indent();
+        defer self.unindent();
+        try self.renderNode(node.iterable);
     }
 }
 
@@ -197,9 +225,9 @@ fn renderDcitionary(self: *Self, node: Parser.Dictionary) !void {
         try self.printIndentedLine("Pair", .{});
         self.indent();
         defer self.unindent();
-        try self.renderNode(self.eib[i]);
+        try self.renderNode(self.adpb[i]);
 
-        try self.renderNode(self.eib[j]);
+        try self.renderNode(self.adpb[j]);
         j += 1;
     }
 }
@@ -244,7 +272,7 @@ fn renderForStmt(self: *Self, node: Parser.ForStmt) !void {
         const body_end = body_start + @as(usize, node.body_len);
         var i: usize = body_start;
         while (i < body_end) : (i += 1) {
-            try self.renderNode(self.eib[i]);
+            try self.renderNode(self.adpb[i]);
         }
     }
 }

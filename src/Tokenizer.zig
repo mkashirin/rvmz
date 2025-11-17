@@ -21,10 +21,10 @@ pub fn next(t: *Tokenizer) Token {
     }
 
     const start = t.index;
-    const c = t.step().?;
+    const char = t.step().?;
 
     // identifiers and keywords
-    switch (c) {
+    switch (char) {
         'a'...'z', 'A'...'Z', '_' => {
             while (t.index < t.source.len) {
                 const sub = t.source[t.index];

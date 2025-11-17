@@ -5,7 +5,10 @@ gpa: Allocator,
 current: Token,
 peeked: Token,
 nodes: ArrayList(Node),
-eib: ArrayList(u32),
+// Additional data pointer buffer
+adpb: ArrayList(u32),
+// Call site argument pointer buffer
+csapb: ArrayList(u32),
 const Parser = @This();
 
 pub const Error = Allocator.Error || fmt.ParseIntError || error{
@@ -24,7 +27,8 @@ pub fn init(tokenizer: *Tokenizer, gpa: Allocator) !Parser {
         .current = undefined,
         .peeked = undefined,
         .nodes = .empty,
-        .eib = .empty,
+        .adpb = .empty,
+        .csapb = .empty,
     };
     p.step();
     p.peekNext();
@@ -73,23 +77,23 @@ pub fn parseStmt(p: *Parser) Error!NodeIndex {
 
 fn parseAssignStmt(p: *Parser) !NodeIndex {
     var variable = try p.parseCondExpr();
-    if (p.current.tag == .equal) {
-        const node = p.nodes.items[@intCast(variable)];
-        switch (node) {
-            .identifier => |name| {
-                p.step();
-                const value = try p.parseAssignStmt();
-                const assign_stmt: AssignStmt = .{
-                    .name = name,
-                    .value = value,
-                };
+    if (p.current.tag != .equal) return variable;
 
-                variable = try p.pushNode(Node{ .assign_stmt = assign_stmt });
-            },
-            else => return Error.ExpectedExpression,
-        }
+    const node = p.nodes.items[@intCast(variable)];
+    switch (node) {
+        .identifier => |name| {
+            p.step();
+            const value = try p.parseAssignStmt();
+            const assign_stmt: AssignStmt = .{
+                .name = name,
+                .value = value,
+            };
+
+            variable = try p.pushNode(Node{ .assign_stmt = assign_stmt });
+            return variable;
+        },
+        else => return Error.ExpectedExpression,
     }
-    return variable;
 }
 
 fn parseFnDef(p: *Parser) !NodeIndex {
@@ -99,16 +103,14 @@ fn parseFnDef(p: *Parser) !NodeIndex {
     p.step();
 
     try p.expect(.left_paren);
-    const args_start: u32 = @intCast(p.eib.items.len);
+    const args_start: u32 = @intCast(p.adpb.items.len);
     var args_len: u32 = 0;
-    while (p.current.tag != .eof) {
-        if (p.current.tag != .identifier) {
-            return Error.ExpectedIdentifier;
-        }
+    while (true) {
+        if (p.current.tag != .identifier) return Error.ExpectedIdentifier;
 
         const arg_node: Node = .{ .identifier = p.current.lexeme.? };
         const arg_index = try p.pushNode(arg_node);
-        try p.eib.append(p.gpa, arg_index);
+        try p.adpb.append(p.gpa, arg_index);
         args_len += 1;
         p.step();
 
@@ -118,11 +120,11 @@ fn parseFnDef(p: *Parser) !NodeIndex {
     try p.expect(.right_paren);
 
     try p.expect(.left_brace);
-    const body_start: u32 = @intCast(p.eib.items.len);
+    const body_start: u32 = @intCast(p.adpb.items.len);
     var body_len: u32 = 0;
-    while (p.current.tag != .right_brace and p.current.tag != .eof) {
+    while (p.current.tag != .right_brace) {
         const stmt_index = try p.parseStmt();
-        try p.eib.append(p.gpa, stmt_index);
+        try p.adpb.append(p.gpa, stmt_index);
         body_len += 1;
     }
     try p.expect(.right_brace);
@@ -148,11 +150,11 @@ fn parseForStmt(p: *Parser) !NodeIndex {
     const iterable = try p.parseExpr();
 
     try p.expect(.left_brace);
-    const body_start: u32 = @intCast(p.eib.items.len);
+    const body_start: u32 = @intCast(p.adpb.items.len);
     var body_len: u32 = 0;
-    while (p.current.tag != .right_brace and p.current.tag != .eof) {
+    while (p.current.tag != .right_brace) {
         const stmt_index = try p.parseStmt();
-        try p.eib.append(p.gpa, stmt_index);
+        try p.adpb.append(p.gpa, stmt_index);
         body_len += 1;
     }
     try p.expect(.right_brace);
@@ -172,22 +174,20 @@ pub fn parseExpr(p: *Parser) Error!NodeIndex {
 
 fn parseCondExpr(p: *Parser) !NodeIndex {
     const then = try p.parseAndOrIn();
-    if (p.current.tag == .keyword_if) {
-        p.step();
+    if (p.current.tag != .keyword_if) return then;
+    p.step();
 
-        const if_cond = try p.parseAndOrIn();
-        if (p.current.tag != .keyword_else) return Error.ExpectedToken;
-        p.step();
+    const if_cond = try p.parseAndOrIn();
+    if (p.current.tag != .keyword_else) return Error.ExpectedToken;
+    p.step();
 
-        const else_expr = try p.parseAndOrIn();
-        const cond_expr: CondExpr = .{
-            .then = then,
-            .if_cond = if_cond,
-            .else_expr = else_expr,
-        };
-        return p.pushNode(Node{ .cond_expr = cond_expr });
-    }
-    return then;
+    const else_expr = try p.parseAndOrIn();
+    const cond_expr: CondExpr = .{
+        .then = then,
+        .if_cond = if_cond,
+        .else_expr = else_expr,
+    };
+    return p.pushNode(Node{ .cond_expr = cond_expr });
 }
 
 fn parseAndOrIn(p: *Parser) !NodeIndex {
@@ -292,44 +292,43 @@ fn parseIndex(p: *Parser, target: NodeIndex) !NodeIndex {
 fn parseName(p: *Parser) !NodeIndex {
     const name = p.current.lexeme.?;
     p.step();
-    if (p.current.tag == .left_paren) {
-        p.step();
+    if (p.current.tag != .left_paren)
+        return p.pushNode(Node{ .identifier = name });
+    p.step();
 
-        const args_start: u32 = @intCast(p.eib.items.len);
-        var args_len: u32 = 0;
-        while (p.current.tag != .right_paren and p.current.tag != .eof) {
-            const arg_idx = p.parseExpr() catch blk: {
-                if (!std.mem.eql(u8, name, "Select") or args_len != 2)
-                    return Error.ExpectedExpression;
+    const args_start: u32 = @intCast(p.csapb.items.len);
+    var args_len: u32 = 0;
+    while (p.current.tag != .right_paren) {
+        const arg_index = p.parseExpr() catch blk: {
+            if (!std.mem.eql(u8, name, "Select") or args_len != 2)
+                return Error.ExpectedExpression;
 
-                const pred: SelectorPred = switch (p.current.tag) {
-                    .double_equal => .equal_pred,
-                    .bang_equal => .not_equal_pred,
-                    .less_than => .less_than_pred,
-                    .less_or_equal_than => .less_or_equal_than_pred,
-                    .greater_than => .greater_than_pred,
-                    .greater_or_equal_than => .greater_or_equal_than_pred,
-                    else => return Error.ExpectedToken,
-                };
-                p.step();
-
-                break :blk try p.pushNode(Node{ .selector_pred = pred });
+            const pred: SelectorPred = switch (p.current.tag) {
+                .double_equal => .equal_pred,
+                .bang_equal => .not_equal_pred,
+                .less_than => .less_than_pred,
+                .less_or_equal_than => .less_or_equal_than_pred,
+                .greater_than => .greater_than_pred,
+                .greater_or_equal_than => .greater_or_equal_than_pred,
+                else => return Error.ExpectedToken,
             };
-            try p.eib.append(p.gpa, arg_idx);
-            args_len += 1;
-            if (p.current.tag == .right_paren) break;
-            try p.expect(.comma);
-        }
-        try p.expect(.right_paren);
+            p.step();
 
-        const call: FnCall = .{
-            .fn_name = name,
-            .args_start = args_start,
-            .args_len = args_len,
+            break :blk try p.pushNode(Node{ .selector_pred = pred });
         };
-        return p.pushNode(Node{ .fn_call = call });
+        try p.csapb.append(p.gpa, arg_index);
+        args_len += 1;
+        if (p.current.tag == .right_paren) break;
+        try p.expect(.comma);
     }
-    return p.pushNode(Node{ .identifier = name });
+    try p.expect(.right_paren);
+
+    const call: FnCall = .{
+        .fn_name = name,
+        .args_start = args_start,
+        .args_len = args_len,
+    };
+    return p.pushNode(Node{ .fn_call = call });
 }
 
 fn parseIntLiteral(p: *Parser) !NodeIndex {
@@ -360,16 +359,49 @@ fn parseBoxed(p: *Parser) !NodeIndex {
 }
 
 fn parseList(p: *Parser) !NodeIndex {
+    std.debug.print("Called parseList", .{});
     try p.expect(.left_bracket);
 
-    const elements_start: u32 = @intCast(p.eib.items.len);
-    var elements_len: u32 = 0;
-    while (p.current.tag != .eof) {
-        const element_idx = try p.parseExpr();
-        try p.eib.append(p.gpa, element_idx);
-        elements_len += 1;
+    // Handle empty list literal `[]` (does it make any sense?):
+    // ```
+    // if (p.current.tag == .right_bracket) {
+    //     p.step();
+    //     const list: List = .{
+    //         .elems_start = @intCast(p.adpb.items.len),
+    //         .elems_len = 0,
+    //     };
+    //     return p.pushNode(Node{ .list = list });
+    // }
+    // ```
+
+    // Parse the first expression. This could be a list element OR the
+    // comprehension expression.
+    const expr = try p.parseExpr();
+
+    if (p.current.tag == .keyword_for) {
+        const body = try p.parseListCompBody();
+        try p.expect(.right_bracket);
+
+        const list_comp: ListComp = .{
+            .expr = expr,
+            .variable = body.var_name,
+            .iterable = body.iterable,
+            .condition = body.condition,
+        };
+        return p.pushNode(Node{ .list_comp = list_comp });
+    }
+
+    const elements_start: u32 = @intCast(p.adpb.items.len);
+    try p.adpb.append(p.gpa, expr);
+    var elements_len: u32 = 1;
+
+    while (p.current.tag == .comma) {
+        p.step();
         if (p.current.tag == .right_bracket) break;
-        try p.expect(.comma);
+
+        const element = try p.parseExpr();
+        try p.adpb.append(p.gpa, element);
+        elements_len += 1;
     }
     try p.expect(.right_bracket);
 
@@ -380,6 +412,36 @@ fn parseList(p: *Parser) !NodeIndex {
     return p.pushNode(Node{ .list = list });
 }
 
+/// Parses the common body of a comprehension: `for var_name in iterable [if condition]`
+/// It expects the 'for' keyword to be the current token.
+fn parseListCompBody(p: *Parser) !struct {
+    var_name: []const u8,
+    iterable: NodeIndex,
+    condition: ?NodeIndex,
+} {
+    try p.expect(.keyword_for);
+
+    if (p.current.tag != .identifier) return Error.ExpectedIdentifier;
+    const var_name = p.current.lexeme.?;
+    p.step();
+
+    try p.expect(.keyword_in);
+
+    const iterable = try p.parseExpr();
+
+    var condition: ?NodeIndex = null;
+    if (p.current.tag == .keyword_if) {
+        p.step();
+        condition = try p.parseExpr();
+    }
+
+    return .{
+        .var_name = var_name,
+        .iterable = iterable,
+        .condition = condition,
+    };
+}
+
 fn parseDictionary(p: *Parser) !NodeIndex {
     try p.expect(.left_brace);
 
@@ -388,7 +450,7 @@ fn parseDictionary(p: *Parser) !NodeIndex {
     var values: std.ArrayList(u32) = .empty;
     defer values.deinit(p.gpa);
 
-    while (p.current.tag != .eof) {
+    while (true) {
         const key_index = try p.parseExpr();
         try keys.append(p.gpa, key_index);
         try p.expect(.colon);
@@ -401,11 +463,11 @@ fn parseDictionary(p: *Parser) !NodeIndex {
     }
     try p.expect(.right_brace);
 
-    const keys_start: u32 = @intCast(p.eib.items.len);
-    try p.eib.appendSlice(p.gpa, keys.items);
+    const keys_start: u32 = @intCast(p.adpb.items.len);
+    try p.adpb.appendSlice(p.gpa, keys.items);
 
-    const values_start: u32 = @intCast(p.eib.items.len);
-    try p.eib.appendSlice(p.gpa, values.items);
+    const values_start: u32 = @intCast(p.adpb.items.len);
+    try p.adpb.appendSlice(p.gpa, values.items);
 
     const dictionary: Dictionary = .{
         .keys_start = keys_start,
@@ -427,6 +489,7 @@ pub const Node = union(enum) {
     fn_call: FnCall,
     return_stmt: ReturnStmt,
     list: List,
+    list_comp: ListComp,
     dictionary: Dictionary,
     index_expr: IndexExpr,
     for_stmt: ForStmt,
@@ -436,6 +499,13 @@ pub const Node = union(enum) {
 pub const ReturnStmt = struct { value: NodeIndex };
 
 pub const List = struct { elems_start: u32, elems_len: u32 };
+
+pub const ListComp = struct {
+    expr: NodeIndex,
+    variable: []const u8,
+    iterable: NodeIndex,
+    condition: ?NodeIndex,
+};
 
 pub const Dictionary = struct {
     keys_start: u32,

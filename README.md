@@ -44,6 +44,8 @@ for n in a_list {
 zero_in_the_list = 0 in the_list;
 
 selector = Select(a_list, the_list, ==);
+
+list_comp = [i + 1 for i in a_list if i > 0 else i];
 ```
 And there is the AST the program would produce:
 ```
@@ -153,7 +155,31 @@ AssignStmt(name: zero_in_the_list)
 AssignStmt(name: selector)
     FnCall(name: Select)
         Args:
-            Identifier(a_list)
-            Identifier(the_list)
+            List
+                Int(1)
+                Int(2)
+                Int(3)
+            List
+                Int(1)
+                Int(2)
+                Int(3)
             SelectorPred(==)
+
+AssignStmt(name: list_comp)
+    ListComp
+        Expr:
+            Binxpr(+)
+                Identifier(i)
+                Int(1)
+        Variable: i
+        Iterable:
+            CondExpr
+                Then:
+                    Identifier(a_list)
+                If:
+                    Binxpr(>)
+                        Identifier(i)
+                        Int(0)
+                Else:
+                    Identifier(i)
 ```

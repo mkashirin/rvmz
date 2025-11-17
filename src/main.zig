@@ -39,7 +39,9 @@ pub fn main() !void {
         \\
         \\ zero_in_the_list = 0 in the_list;
         \\
-        \\ selector = Select(a_list, the_list, ==);
+        \\ selector = Select([1, 2, 3], [1, 2, 3], ==);
+        \\
+        \\ list_comp = [i + 1 for i in a_list if i > 0 else i];
     ;
 
     var tokenizer: Tokenizer = .init(source);
@@ -53,12 +55,13 @@ pub fn main() !void {
 
     std.debug.print("Parsed AST (index-backed):\n", .{});
     const nodes = parser.nodes.items;
-    const eib = parser.eib.items;
+    const adbp = parser.adpb.items;
+    const csapb = parser.csapb.items;
     var buffer: [1024]u8 = undefined;
     const writer = std.Progress.lockStderrWriter(&buffer);
     defer std.Progress.unlockStderrWriter();
 
-    var renderer = Renderer.init(writer, nodes, eib);
+    var renderer = Renderer.init(writer, nodes, adbp, csapb);
     for (program_indices.items) |node| {
         std.debug.print("\n", .{});
         try renderer.render(node);

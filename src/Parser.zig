@@ -1,4 +1,4 @@
-// TODO: Add list/dict comprehension, collection literals as arguments.
+// TODO: Fix conditional list comprehensions to match the Python style.
 
 tokenizer: *Tokenizer,
 gpa: Allocator,

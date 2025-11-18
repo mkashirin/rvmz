@@ -1,5 +1,3 @@
-// TODO: Fix conditional list comprehensions to match the Python style.
-
 tokenizer: *Tokenizer,
 gpa: Allocator,
 current: Token,
@@ -359,7 +357,6 @@ fn parseBoxed(p: *Parser) !NodeIndex {
 }
 
 fn parseList(p: *Parser) !NodeIndex {
-    std.debug.print("Called parseList", .{});
     try p.expect(.left_bracket);
 
     // Handle empty list literal `[]` (does it make any sense?):
@@ -386,7 +383,6 @@ fn parseList(p: *Parser) !NodeIndex {
             .expr = expr,
             .variable = body.var_name,
             .iterable = body.iterable,
-            .condition = body.condition,
         };
         return p.pushNode(Node{ .list_comp = list_comp });
     }
@@ -417,7 +413,6 @@ fn parseList(p: *Parser) !NodeIndex {
 fn parseListCompBody(p: *Parser) !struct {
     var_name: []const u8,
     iterable: NodeIndex,
-    condition: ?NodeIndex,
 } {
     try p.expect(.keyword_for);
 
@@ -429,17 +424,7 @@ fn parseListCompBody(p: *Parser) !struct {
 
     const iterable = try p.parseExpr();
 
-    var condition: ?NodeIndex = null;
-    if (p.current.tag == .keyword_if) {
-        p.step();
-        condition = try p.parseExpr();
-    }
-
-    return .{
-        .var_name = var_name,
-        .iterable = iterable,
-        .condition = condition,
-    };
+    return .{ .var_name = var_name, .iterable = iterable };
 }
 
 fn parseDictionary(p: *Parser) !NodeIndex {
@@ -504,7 +489,6 @@ pub const ListComp = struct {
     expr: NodeIndex,
     variable: []const u8,
     iterable: NodeIndex,
-    condition: ?NodeIndex,
 };
 
 pub const Dictionary = struct {

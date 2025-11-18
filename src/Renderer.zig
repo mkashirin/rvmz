@@ -78,7 +78,7 @@ fn renderIdentifier(self: *Self, node: []const u8) !void {
 }
 
 fn renderBinExpr(self: *Self, node: Parser.BinExpr) !void {
-    try self.printIndentedLine("Binxpr({s})", .{binOpLexeme(node.op)});
+    try self.printIndentedLine("BinExpr({s})", .{binOpLexeme(node.op)});
     self.indent();
     defer self.unindent();
     try self.renderNode(node.lhs);
@@ -196,14 +196,6 @@ fn renderListComp(self: *Self, node: Parser.ListComp) !void {
 
     try self.printIndentedLine("Variable: {s}", .{node.variable});
 
-    try self.printIndentedLine("Iterable:", .{});
-    {
-        self.indent();
-        defer self.unindent();
-        try self.renderNode(node.iterable);
-    }
-
-    if (node.condition == null) return;
     try self.printIndentedLine("Iterable:", .{});
     {
         self.indent();

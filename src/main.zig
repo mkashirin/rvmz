@@ -41,7 +41,7 @@ pub fn main() !void {
         \\
         \\ selector = Select([1, 2, 3], [1, 2, 3], ==);
         \\
-        \\ list_comp = [i + 1 for i in a_list if i > 0 else i];
+        \\ list_comp = [i + 1 if i > 0 else i for i in a_list];
     ;
 
     var tokenizer: Tokenizer = .init(source);

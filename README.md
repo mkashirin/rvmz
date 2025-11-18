@@ -43,9 +43,9 @@ for n in a_list {
 
 zero_in_the_list = 0 in the_list;
 
-selector = Select(a_list, the_list, ==);
+selector = Select([1, 2, 3], [1, 2, 3], ==);
 
-list_comp = [i + 1 for i in a_list if i > 0 else i];
+list_comp = [i + 1 if i > 0 else i for i in a_list];
 ```
 And there is the AST the program would produce:
 ```
@@ -63,7 +63,7 @@ FnDef(name: add)
         Arg: b
     Body:
         AssignStmt(name: sum)
-            Binxpr(+)
+            BinExpr(+)
                 Identifier(a)
                 Identifier(b)
         ReturnStmt:
@@ -81,7 +81,7 @@ CondExpr
             Args:
                 String("Success")
     If:
-        Binxpr(>)
+        BinExpr(>)
             Identifier(c)
             Int(0)
     Else:
@@ -93,15 +93,15 @@ CondExpr
     Then:
         Int(0)
     If:
-        Binxpr(and)
-            Binxpr(-)
+        BinExpr(and)
+            BinExpr(-)
                 Identifier(an_int)
                 Identifier(the_int)
-            Binxpr(-)
+            BinExpr(-)
                 Identifier(the_int)
                 Identifier(an_int)
     Else:
-        Binxpr(or)
+        BinExpr(or)
             Identifier(int_sum)
             String("Huh?")
 
@@ -143,12 +143,14 @@ ForStmt(var: n)
     Iterable:
         Identifier(a_list)
     Body:
-        Binxpr(+)
-            Identifier(n)
-            Int(1)
+        FnCall(name: print)
+            Args:
+                BinExpr(+)
+                    Identifier(n)
+                    Int(1)
 
 AssignStmt(name: zero_in_the_list)
-    Binxpr(in)
+    BinExpr(in)
         Int(0)
         Identifier(the_list)
 
@@ -168,18 +170,18 @@ AssignStmt(name: selector)
 AssignStmt(name: list_comp)
     ListComp
         Expr:
-            Binxpr(+)
-                Identifier(i)
-                Int(1)
-        Variable: i
-        Iterable:
             CondExpr
                 Then:
-                    Identifier(a_list)
+                    BinExpr(+)
+                        Identifier(i)
+                        Int(1)
                 If:
-                    Binxpr(>)
+                    BinExpr(>)
                         Identifier(i)
                         Int(0)
                 Else:
                     Identifier(i)
+        Variable: i
+        Iterable:
+            Identifier(a_list)
 ```

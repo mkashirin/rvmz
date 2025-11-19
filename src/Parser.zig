@@ -34,12 +34,12 @@ pub fn init(tokenizer: *Tokenizer, gpa: Allocator) !Parser {
 }
 
 pub fn buildAst(p: *Parser) !Tree {
-    var program_indices: std.ArrayList(u32) = .empty;
+    var indices_: std.ArrayList(u32) = .empty;
     while (p.current.tag != .eof) {
         const stmt_index = try p.parseStmt();
-        try program_indices.append(p.gpa, stmt_index);
+        try indices_.append(p.gpa, stmt_index);
     }
-    const indices = try program_indices.toOwnedSlice(p.gpa);
+    const indices = try indices_.toOwnedSlice(p.gpa);
     const nodes = try p.nodes.toOwnedSlice(p.gpa);
     const adbp = try p.adpb.toOwnedSlice(p.gpa);
     const csapb = try p.csapb.toOwnedSlice(p.gpa);
@@ -493,25 +493,6 @@ pub const Node = union(enum) {
     selector_pred: SelectorPred,
 };
 
-pub const ReturnStmt = struct { value: NodeIndex };
-
-pub const List = struct { elems_start: u32, elems_len: u32 };
-
-pub const ListComp = struct {
-    expr: NodeIndex,
-    variable: []const u8,
-    iterable: NodeIndex,
-};
-
-pub const Dictionary = struct {
-    keys_start: u32,
-    keys_len: u32,
-    vals_start: u32,
-    vals_len: u32,
-};
-
-pub const IndexExpr = struct { target: NodeIndex, index: NodeIndex };
-
 pub const BinExpr = struct { lhs: NodeIndex, op: BinOp, rhs: NodeIndex };
 
 pub fn binOpLexeme(bin_op: BinOp) []const u8 {
@@ -561,15 +542,6 @@ pub fn selectorPredLexeme(pred: SelectorPred) []const u8 {
     };
 }
 
-pub const SelectorPred = enum {
-    equal_pred,
-    not_equal_pred,
-    less_than_pred,
-    less_or_equal_than_pred,
-    greater_than_pred,
-    greater_or_equal_than_pred,
-};
-
 pub const FnCall = struct {
     fn_name: []const u8,
     args_start: u32,
@@ -593,11 +565,39 @@ pub const FnDef = struct {
     body_len: u32,
 };
 
+pub const ReturnStmt = struct { value: NodeIndex };
+
+pub const List = struct { elems_start: u32, elems_len: u32 };
+
+pub const ListComp = struct {
+    expr: NodeIndex,
+    variable: []const u8,
+    iterable: NodeIndex,
+};
+
+pub const Dictionary = struct {
+    keys_start: u32,
+    keys_len: u32,
+    vals_start: u32,
+    vals_len: u32,
+};
+
+pub const IndexExpr = struct { target: NodeIndex, index: NodeIndex };
+
 pub const ForStmt = struct {
     var_name: []const u8,
     iterable: NodeIndex,
     body_start: u32,
     body_len: u32,
+};
+
+pub const SelectorPred = enum {
+    equal_pred,
+    not_equal_pred,
+    less_than_pred,
+    less_or_equal_than_pred,
+    greater_than_pred,
+    greater_or_equal_than_pred,
 };
 
 const std = @import("std");

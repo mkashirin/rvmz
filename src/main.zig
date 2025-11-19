@@ -5,6 +5,7 @@ const Parser = @import("Parser.zig");
 const Node = Parser.Node;
 const NodeIndex = Parser.NodeIndex;
 const Renderer = @import("Renderer.zig");
+const Interpreter = @import("Interpreter.zig");
 
 pub fn main() !void {
     var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
@@ -46,24 +47,19 @@ pub fn main() !void {
 
     var tokenizer: Tokenizer = .init(source);
     var parser: Parser = try .init(&tokenizer, gpa);
+    const tree = try parser.buildAst();
 
-    var program_indices: std.ArrayList(u32) = .empty;
-    while (parser.current.tag != .eof) {
-        const stmt_index = try parser.parseStmt();
-        try program_indices.append(gpa, stmt_index);
-    }
-
-    std.debug.print("Parsed AST (index-backed):\n", .{});
-    const nodes = parser.nodes.items;
-    const adbp = parser.adpb.items;
-    const csapb = parser.csapb.items;
     var buffer: [1024]u8 = undefined;
     const writer = std.Progress.lockStderrWriter(&buffer);
     defer std.Progress.unlockStderrWriter();
 
-    var renderer = Renderer.init(writer, nodes, adbp, csapb);
-    for (program_indices.items) |node| {
+    var renderer = Renderer.init(writer, tree.nodes, tree.adpb, tree.csapb);
+    std.debug.print("Parsed AST (index-backed):\n", .{});
+    for (tree.indices) |node| {
         std.debug.print("\n", .{});
         try renderer.render(node);
     }
+
+    const interpreter: Interpreter = try .init(tree, gpa);
+    _ = interpreter;
 }

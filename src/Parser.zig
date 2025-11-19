@@ -19,7 +19,7 @@ pub const Error = Allocator.Error || fmt.ParseIntError || error{
 };
 
 pub fn init(tokenizer: *Tokenizer, gpa: Allocator) !Parser {
-    var p = Parser{
+    var p: Parser = .{
         .tokenizer = tokenizer,
         .gpa = gpa,
         .current = undefined,
@@ -33,20 +33,25 @@ pub fn init(tokenizer: *Tokenizer, gpa: Allocator) !Parser {
     return p;
 }
 
-fn step(p: *Parser) void {
-    p.current = p.tokenizer.next();
+pub fn buildAst(p: *Parser) !Tree {
+    var program_indices: std.ArrayList(u32) = .empty;
+    while (p.current.tag != .eof) {
+        const stmt_index = try p.parseStmt();
+        try program_indices.append(p.gpa, stmt_index);
+    }
+    const indices = try program_indices.toOwnedSlice(p.gpa);
+    const nodes = try p.nodes.toOwnedSlice(p.gpa);
+    const adbp = try p.adpb.toOwnedSlice(p.gpa);
+    const csapb = try p.csapb.toOwnedSlice(p.gpa);
+    return .{
+        .indices = indices,
+        .nodes = nodes,
+        .adpb = adbp,
+        .csapb = csapb,
+    };
 }
 
-fn peekNext(p: *Parser) void {
-    p.peeked = p.tokenizer.peekNext();
-}
-
-fn expect(p: *Parser, tag: Tag) !void {
-    if (p.current.tag != tag) return Error.ExpectedToken;
-    p.step();
-}
-
-pub fn parseStmt(p: *Parser) Error!NodeIndex {
+fn parseStmt(p: *Parser) Error!NodeIndex {
     var res: Error!NodeIndex = undefined;
     p.peekNext();
     switch (p.current.tag) {
@@ -166,7 +171,7 @@ fn parseForStmt(p: *Parser) !NodeIndex {
     return p.pushNode(Node{ .for_stmt = for_stmt });
 }
 
-pub fn parseExpr(p: *Parser) Error!NodeIndex {
+fn parseExpr(p: *Parser) Error!NodeIndex {
     return p.parseCondExpr();
 }
 
@@ -263,9 +268,9 @@ fn parsePrimary(p: *Parser) !NodeIndex {
         .identifier => primary = try p.parseName(),
         .int_literal => primary = try p.parseIntLiteral(),
         .string_literal => primary = try p.parseStringLiteral(),
-        .left_paren => primary = try p.parseBoxed(),
         .left_bracket => primary = try p.parseList(),
         .left_brace => primary = try p.parseDictionary(),
+        .left_paren => primary = try p.parseBoxed(),
         else => return Error.ExpectedExpression,
     }
     primary = try p.parseIndex(primary);
@@ -343,19 +348,6 @@ fn parseStringLiteral(p: *Parser) !NodeIndex {
     return index;
 }
 
-fn pushNode(p: *Parser, node: Node) Allocator.Error!NodeIndex {
-    try p.nodes.append(p.gpa, node);
-    const index: NodeIndex = @intCast(p.nodes.items.len - 1);
-    return index;
-}
-
-fn parseBoxed(p: *Parser) !NodeIndex {
-    p.step();
-    const index = try p.parseExpr();
-    try p.expect(.right_paren);
-    return index;
-}
-
 fn parseList(p: *Parser) !NodeIndex {
     try p.expect(.left_bracket);
 
@@ -376,13 +368,18 @@ fn parseList(p: *Parser) !NodeIndex {
     const expr = try p.parseExpr();
 
     if (p.current.tag == .keyword_for) {
-        const body = try p.parseListCompBody();
-        try p.expect(.right_bracket);
+        try p.expect(.keyword_for);
+        if (p.current.tag != .identifier) return Error.ExpectedIdentifier;
+        const var_name = p.current.lexeme.?;
+        p.step();
 
+        try p.expect(.keyword_in);
+        const iterable = try p.parseExpr();
+        try p.expect(.right_bracket);
         const list_comp: ListComp = .{
             .expr = expr,
-            .variable = body.var_name,
-            .iterable = body.iterable,
+            .variable = var_name,
+            .iterable = iterable,
         };
         return p.pushNode(Node{ .list_comp = list_comp });
     }
@@ -406,25 +403,6 @@ fn parseList(p: *Parser) !NodeIndex {
         .elems_len = elements_len,
     };
     return p.pushNode(Node{ .list = list });
-}
-
-/// Parses the common body of a comprehension: `for var_name in iterable [if condition]`
-/// It expects the 'for' keyword to be the current token.
-fn parseListCompBody(p: *Parser) !struct {
-    var_name: []const u8,
-    iterable: NodeIndex,
-} {
-    try p.expect(.keyword_for);
-
-    if (p.current.tag != .identifier) return Error.ExpectedIdentifier;
-    const var_name = p.current.lexeme.?;
-    p.step();
-
-    try p.expect(.keyword_in);
-
-    const iterable = try p.parseExpr();
-
-    return .{ .var_name = var_name, .iterable = iterable };
 }
 
 fn parseDictionary(p: *Parser) !NodeIndex {
@@ -462,6 +440,40 @@ fn parseDictionary(p: *Parser) !NodeIndex {
     };
     return p.pushNode(Node{ .dictionary = dictionary });
 }
+
+fn pushNode(p: *Parser, node: Node) Allocator.Error!NodeIndex {
+    try p.nodes.append(p.gpa, node);
+    const index: NodeIndex = @intCast(p.nodes.items.len - 1);
+    return index;
+}
+
+fn parseBoxed(p: *Parser) !NodeIndex {
+    p.step();
+    const index = try p.parseExpr();
+    try p.expect(.right_paren);
+    return index;
+}
+
+fn step(p: *Parser) void {
+    p.current = p.tokenizer.next();
+}
+
+fn peekNext(p: *Parser) void {
+    p.peeked = p.tokenizer.peekNext();
+}
+
+fn expect(p: *Parser, tag: Tag) !void {
+    if (p.current.tag != tag) return Error.ExpectedToken;
+    p.step();
+}
+
+// Does this need to be a separate struct?
+pub const Tree = struct {
+    indices: []const u32,
+    nodes: []const Node,
+    adpb: []const u32,
+    csapb: []const u32,
+};
 
 pub const Node = union(enum) {
     int: i64,

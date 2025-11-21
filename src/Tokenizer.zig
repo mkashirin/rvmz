@@ -1,15 +1,27 @@
 source: []const u8,
 index: usize,
+line: usize,
+column: usize,
 const Tokenizer = @This();
 
 pub fn init(source: []const u8) Tokenizer {
-    return Tokenizer{ .source = source, .index = 0 };
+    return .{ .source = source, .index = 0, .line = 1, .column = 1 };
+}
+
+pub fn deinit(t: *Tokenizer) void {
+    t.* = undefined;
 }
 
 pub fn peekNext(t: *Tokenizer) Token {
     const init_index = t.index;
+    const init_line = t.line;
+    const init_column = t.column;
+
     const token = t.next();
+
     t.index = init_index;
+    t.line = init_line;
+    t.column = init_column;
     return token;
 }
 
@@ -17,23 +29,23 @@ pub fn next(t: *Tokenizer) Token {
     var res: Token = .{ .tag = .invalid };
     t.skipWhitespaces();
     if (t.index >= t.source.len) {
-        return Token{ .tag = .eof, .lexeme = "EOF" };
+        return .{ .tag = .eof, .lexeme = "EOF" };
     }
     const start = t.index;
+    const char = t.step().?;
 
-    // identifiers and keywords
-    switch (t.step().?) {
+    switch (char) {
         'a'...'z', 'A'...'Z', '_' => {
             while (t.index < t.source.len) {
                 const sub = t.source[t.index];
                 switch (sub) {
-                    'a'...'z', 'A'...'Z', '0'...'9', '_' => t.index += 1,
+                    'a'...'z', 'A'...'Z', '0'...'9', '_' => _ = t.step(),
                     else => break,
                 }
             }
             const lexeme = t.source[start..t.index];
             if (Token.getKeyword(lexeme)) |tag| res.tag = tag else {
-                res = Token{ .tag = .identifier, .lexeme = lexeme };
+                res = .{ .tag = .identifier, .lexeme = lexeme };
             }
         },
 
@@ -41,22 +53,22 @@ pub fn next(t: *Tokenizer) Token {
             while (t.index < t.source.len) {
                 const digit = t.source[t.index];
                 switch (digit) {
-                    '0'...'9' => t.index += 1,
+                    '0'...'9' => _ = t.step(),
                     else => break,
                 }
             }
-            res = Token{
+            res = .{
                 .tag = .int_literal,
                 .lexeme = t.source[start..t.index],
             };
         },
 
         '"' => {
-            t.index += 1;
+            _ = t.step();
             while (t.index < t.source.len and
-                t.source[t.index] != '"') t.index += 1;
-            t.index += 1;
-            res = Token{
+                t.source[t.index] != '"') _ = t.step();
+            _ = t.step();
+            res = .{
                 .tag = .string_literal,
                 .lexeme = t.source[start + 1 .. t.index - 1],
             };
@@ -70,28 +82,28 @@ pub fn next(t: *Tokenizer) Token {
         '=' => switch (t.source[t.index]) {
             '=' => {
                 res.tag = .double_equal;
-                t.index += 1;
+                _ = t.step();
             },
             else => res.tag = .equal,
         },
         '!' => switch (t.source[t.index]) {
             '=' => {
                 res.tag = .bang_equal;
-                t.index += 1;
+                _ = t.step();
             },
             else => res.tag = .invalid,
         },
         '<' => switch (t.source[t.index]) {
             '=' => {
                 res.tag = .less_or_equal_than;
-                t.index += 1;
+                _ = t.step();
             },
             else => res.tag = .less_than,
         },
         '>' => switch (t.source[t.index]) {
             '=' => {
                 res.tag = .greater_or_equal_than;
-                t.index += 1;
+                _ = t.step();
             },
             else => res.tag = .greater_than,
         },
@@ -108,12 +120,14 @@ pub fn next(t: *Tokenizer) Token {
 
         else => res = .{ .tag = .eof, .lexeme = "EOF" },
     }
+    res.location = .{ .line = t.line, .column = t.column };
     return res;
 }
 
 pub const Token = struct {
     tag: Tag,
     lexeme: ?[]const u8 = null,
+    location: Location = undefined,
 
     pub const Tag = enum {
         eof,
@@ -153,6 +167,8 @@ pub const Token = struct {
         keyword_in,
     };
 
+    pub const Location = struct { line: usize, column: usize };
+
     pub const keywords_map: std.StaticStringMap(Tag) = .initComptime(.{
         .{ "and", .keyword_and },
         .{ "or", .keyword_or },
@@ -172,7 +188,7 @@ pub const Token = struct {
 fn skipWhitespaces(t: *Tokenizer) void {
     while (t.index < t.source.len) {
         switch (t.source[t.index]) {
-            ' ', '\t', '\n', '\r' => t.index += 1,
+            ' ', '\t', '\n', '\r' => _ = t.step(),
             else => break,
         }
     }
@@ -181,6 +197,10 @@ fn skipWhitespaces(t: *Tokenizer) void {
 fn step(t: *Tokenizer) ?u8 {
     if (t.index >= t.source.len) return null;
     const char = t.source[t.index];
+    if (char == '\n') {
+        t.column = 1;
+        t.line += 1;
+    } else if (char == '\t') t.column += 8 else t.column += 1;
     t.index += 1;
     return char;
 }

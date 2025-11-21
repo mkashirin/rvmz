@@ -1,12 +1,15 @@
+// TODO: Add bolean literals: true and false, improve error message, when
+// `Error.ExpectedToken` is returned.
+
 tokenizer: *Tokenizer,
 gpa: Allocator,
-current: Token,
-peeked: Token,
-nodes: ArrayList(Node),
-// Additional data pointer buffer
-adpb: ArrayList(u32),
-// Call site argument pointer buffer
-csapb: ArrayList(u32),
+current: Token = undefined,
+peeked: Token = undefined,
+nodes: ArrayList(Node) = .empty,
+/// Additional data pointer buffer
+adpb: ArrayList(u32) = .empty,
+/// Call site argument pointer buffer
+csapb: ArrayList(u32) = .empty,
 const Parser = @This();
 
 pub const Error = Allocator.Error || fmt.ParseIntError || error{
@@ -19,44 +22,71 @@ pub const Error = Allocator.Error || fmt.ParseIntError || error{
 };
 
 pub fn init(tokenizer: *Tokenizer, gpa: Allocator) !Parser {
-    var p: Parser = .{
-        .tokenizer = tokenizer,
-        .gpa = gpa,
-        .current = undefined,
-        .peeked = undefined,
-        .nodes = .empty,
-        .adpb = .empty,
-        .csapb = .empty,
-    };
+    var p: Parser = .{ .tokenizer = tokenizer, .gpa = gpa };
     p.step();
     p.peekNext();
     return p;
 }
 
-pub fn buildAst(p: *Parser) !Tree {
+pub fn deinit(p: *Parser) void {
+    p.tokenizer.deinit();
+    p.nodes.deinit(p.gpa);
+    p.adpb.deinit(p.gpa);
+    p.csapb.deinit(p.gpa);
+    p.* = undefined;
+}
+
+pub fn buildAst(p: *Parser) Allocator.Error!ParseResult {
     var indices_: std.ArrayList(u32) = .empty;
     while (p.current.tag != .eof) {
-        const stmt_index = try p.parseStmt();
+        const stmt_index = p.parseStmt() catch |err| {
+            return .{ .err = .{ .cause = p.current, .value = err } };
+        };
         try indices_.append(p.gpa, stmt_index);
     }
     const indices = try indices_.toOwnedSlice(p.gpa);
     const nodes = try p.nodes.toOwnedSlice(p.gpa);
     const adbp = try p.adpb.toOwnedSlice(p.gpa);
     const csapb = try p.csapb.toOwnedSlice(p.gpa);
-    return .{
+    return .{ .ok = .{
         .indices = indices,
         .nodes = nodes,
         .adpb = adbp,
         .csapb = csapb,
-    };
+    } };
 }
+
+pub const ParseResult = union(enum) {
+    ok: Tree,
+    err: ResError,
+
+    const ResError = struct { cause: Tokenizer.Token, value: Error };
+    const ERR_CODE: u8 = 1;
+
+    pub fn unwrap(pr: ParseResult, tree: *Tree) void {
+        switch (pr) {
+            .ok => |ok| tree.* = ok,
+            .err => |err| {
+                std.debug.print(
+                    "Error at line {d}, column {d}: {any}\n",
+                    .{
+                        err.cause.location.line,
+                        err.cause.location.column,
+                        err.value,
+                    },
+                );
+                std.process.exit(ERR_CODE);
+            },
+        }
+    }
+};
 
 fn parseStmt(p: *Parser) Error!NodeIndex {
     p.peekNext();
     return switch (p.current.tag) {
         .identifier => switch (p.peeked.tag) {
             .equal => p.parseAssignStmt(),
-            else => p.parseExpr(),
+            else => p.parseExprStmt(),
         },
         .keyword_def => p.parseFnDef(),
         .keyword_return => p.parseReturnStmt(),
@@ -80,6 +110,8 @@ fn parseAssignStmt(p: *Parser) !NodeIndex {
             };
 
             variable = try p.pushNode(Node{ .assign_stmt = assign_stmt });
+            try p.expect(.semicolon);
+            p.step();
             return variable;
         },
         else => return Error.ExpectedExpression,
@@ -88,11 +120,13 @@ fn parseAssignStmt(p: *Parser) !NodeIndex {
 
 fn parseFnDef(p: *Parser) !NodeIndex {
     try p.expect(.keyword_def);
+    p.step();
     if (p.current.tag != .identifier) return Error.ExpectedIdentifier;
     const name = p.current.lexeme.?;
     p.step();
 
     try p.expect(.left_paren);
+    p.step();
     const args_start: u32 = @intCast(p.adpb.items.len);
     var args_len: u32 = 0;
     while (true) {
@@ -106,10 +140,13 @@ fn parseFnDef(p: *Parser) !NodeIndex {
 
         if (p.current.tag == .right_paren) break;
         try p.expect(.comma);
+        p.step();
     }
     try p.expect(.right_paren);
+    p.step();
 
     try p.expect(.left_brace);
+    p.step();
     const body_start: u32 = @intCast(p.adpb.items.len);
     var body_len: u32 = 0;
     while (p.current.tag != .right_brace) {
@@ -118,6 +155,7 @@ fn parseFnDef(p: *Parser) !NodeIndex {
         body_len += 1;
     }
     try p.expect(.right_brace);
+    p.step();
 
     const fn_def: FnDef = .{
         .name = name,
@@ -127,7 +165,6 @@ fn parseFnDef(p: *Parser) !NodeIndex {
         .body_len = body_len,
     };
     const res = p.pushNode(Node{ .fn_def = fn_def });
-    try p.expect(.semicolon);
     return res;
 }
 
@@ -135,21 +172,25 @@ fn parseReturnStmt(p: *Parser) !NodeIndex {
     p.step();
     const value = try p.parseExpr();
     try p.expect(.semicolon);
+    p.step();
     const return_stmt: ReturnStmt = .{ .value = value };
     return p.pushNode(Node{ .return_stmt = return_stmt });
 }
 
 fn parseForStmt(p: *Parser) !NodeIndex {
     try p.expect(.keyword_for);
+    p.step();
     if (p.current.tag != .identifier) return Error.ExpectedIdentifier;
     const var_name = p.current.lexeme.?;
     p.step();
 
     try p.expect(.keyword_in);
+    p.step();
 
     const iterable = try p.parseExpr();
 
     try p.expect(.left_brace);
+    p.step();
     const body_start: u32 = @intCast(p.adpb.items.len);
     var body_len: u32 = 0;
     while (p.current.tag != .right_brace) {
@@ -158,6 +199,7 @@ fn parseForStmt(p: *Parser) !NodeIndex {
         body_len += 1;
     }
     try p.expect(.right_brace);
+    p.step();
 
     const for_stmt: ForStmt = .{
         .var_name = var_name,
@@ -171,6 +213,7 @@ fn parseForStmt(p: *Parser) !NodeIndex {
 fn parseExprStmt(p: *Parser) Error!NodeIndex {
     const res = p.parseExpr();
     try p.expect(.semicolon);
+    p.step();
     return res;
 }
 
@@ -285,6 +328,7 @@ fn parseIndex(p: *Parser, target: NodeIndex) !NodeIndex {
         p.step();
         const index = try p.parseExpr();
         try p.expect(.right_bracket);
+        p.step();
 
         const index_expr: IndexExpr = .{ .target = target, .index = index };
         return p.pushNode(Node{ .index_expr = index_expr });
@@ -326,8 +370,10 @@ fn parseName(p: *Parser) !NodeIndex {
         args_len += 1;
         if (p.current.tag == .right_paren) break;
         try p.expect(.comma);
+        p.step();
     }
     try p.expect(.right_paren);
+    p.step();
 
     const call: FnCall = .{
         .fn_name = name,
@@ -353,18 +399,16 @@ fn parseStringLiteral(p: *Parser) !NodeIndex {
 
 fn parseList(p: *Parser) !NodeIndex {
     try p.expect(.left_bracket);
+    p.step();
 
-    // Handle empty list literal `[]` (does it make any sense?):
-    // ```
-    // if (p.current.tag == .right_bracket) {
-    //     p.step();
-    //     const list: List = .{
-    //         .elems_start = @intCast(p.adpb.items.len),
-    //         .elems_len = 0,
-    //     };
-    //     return p.pushNode(Node{ .list = list });
-    // }
-    // ```
+    if (p.current.tag == .right_bracket) {
+        p.step();
+        const list: List = .{
+            .elems_start = @intCast(p.adpb.items.len),
+            .elems_len = 0,
+        };
+        return p.pushNode(Node{ .list = list });
+    }
 
     // Parse the first expression. This could be a list element OR the
     // comprehension expression.
@@ -372,13 +416,16 @@ fn parseList(p: *Parser) !NodeIndex {
 
     if (p.current.tag == .keyword_for) {
         try p.expect(.keyword_for);
+        p.step();
         if (p.current.tag != .identifier) return Error.ExpectedIdentifier;
         const var_name = p.current.lexeme.?;
         p.step();
 
         try p.expect(.keyword_in);
+        p.step();
         const iterable = try p.parseExpr();
         try p.expect(.right_bracket);
+        p.step();
         const list_comp: ListComp = .{
             .expr = expr,
             .variable = var_name,
@@ -400,6 +447,7 @@ fn parseList(p: *Parser) !NodeIndex {
         elements_len += 1;
     }
     try p.expect(.right_bracket);
+    p.step();
 
     const list: List = .{
         .elems_start = elements_start,
@@ -410,6 +458,7 @@ fn parseList(p: *Parser) !NodeIndex {
 
 fn parseDictionary(p: *Parser) !NodeIndex {
     try p.expect(.left_brace);
+    p.step();
 
     var keys: std.ArrayList(u32) = .empty;
     defer keys.deinit(p.gpa);
@@ -420,14 +469,17 @@ fn parseDictionary(p: *Parser) !NodeIndex {
         const key_index = try p.parseExpr();
         try keys.append(p.gpa, key_index);
         try p.expect(.colon);
+        p.step();
 
         const value_index = try p.parseExpr();
         try values.append(p.gpa, value_index);
 
         if (p.current.tag == .right_brace) break;
         try p.expect(.comma);
+        p.step();
     }
     try p.expect(.right_brace);
+    p.step();
 
     const keys_start: u32 = @intCast(p.adpb.items.len);
     try p.adpb.appendSlice(p.gpa, keys.items);
@@ -454,6 +506,7 @@ fn parseBoxed(p: *Parser) !NodeIndex {
     p.step();
     const index = try p.parseExpr();
     try p.expect(.right_paren);
+    p.step();
     return index;
 }
 
@@ -467,7 +520,6 @@ fn peekNext(p: *Parser) void {
 
 fn expect(p: *Parser, tag: Tag) !void {
     if (p.current.tag != tag) return Error.ExpectedToken;
-    p.step();
 }
 
 // Does this need to be a separate struct?

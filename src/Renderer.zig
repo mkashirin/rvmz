@@ -4,7 +4,7 @@ writer: *std.Io.Writer,
 nodes: []const Node,
 adpb: []const u32,
 csapb: []const u32,
-indent_level: usize,
+indent_level: u8,
 const Renderer = @This();
 const INDENT_SPACES = 4;
 

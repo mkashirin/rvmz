@@ -1,4 +1,4 @@
-// TODO: Fix binary expression evaluation (arithmetic) bugs.
+// TODO: Finish index expression evaluation.
 
 tree: Tree,
 gpa: Allocator,

@@ -19,12 +19,10 @@ pub fn next(t: *Tokenizer) Token {
     if (t.index >= t.source.len) {
         return Token{ .tag = .eof, .lexeme = "EOF" };
     }
-
     const start = t.index;
-    const char = t.step().?;
 
     // identifiers and keywords
-    switch (char) {
+    switch (t.step().?) {
         'a'...'z', 'A'...'Z', '_' => {
             while (t.index < t.source.len) {
                 const sub = t.source[t.index];

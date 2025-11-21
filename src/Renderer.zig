@@ -218,7 +218,6 @@ fn renderDcitionary(r: *Renderer, node: Parser.Dictionary) !void {
         r.indent();
         defer r.unindent();
         try r.renderNode(r.adpb[i]);
-
         try r.renderNode(r.adpb[j]);
         j += 1;
     }

@@ -52,30 +52,17 @@ pub fn buildAst(p: *Parser) !Tree {
 }
 
 fn parseStmt(p: *Parser) Error!NodeIndex {
-    var res: Error!NodeIndex = undefined;
     p.peekNext();
-    switch (p.current.tag) {
+    return switch (p.current.tag) {
         .identifier => switch (p.peeked.tag) {
-            .equal => {
-                res = p.parseAssignStmt();
-                try p.expect(.semicolon);
-                return res;
-            },
-            else => res = p.parseExpr(),
+            .equal => p.parseAssignStmt(),
+            else => p.parseExpr(),
         },
-        .keyword_def => return p.parseFnDef(),
-        .keyword_for => return p.parseForStmt(),
-        .keyword_return => {
-            p.step();
-            const value = try p.parseExpr();
-            try p.expect(.semicolon);
-            const return_stmt: ReturnStmt = .{ .value = value };
-            return p.pushNode(Node{ .return_stmt = return_stmt });
-        },
-        else => res = p.parseExpr(),
-    }
-    try p.expect(.semicolon);
-    return res;
+        .keyword_def => p.parseFnDef(),
+        .keyword_return => p.parseReturnStmt(),
+        .keyword_for => p.parseForStmt(),
+        else => p.parseExprStmt(),
+    };
 }
 
 fn parseAssignStmt(p: *Parser) !NodeIndex {
@@ -139,7 +126,17 @@ fn parseFnDef(p: *Parser) !NodeIndex {
         .body_start = body_start,
         .body_len = body_len,
     };
-    return p.pushNode(Node{ .fn_def = fn_def });
+    const res = p.pushNode(Node{ .fn_def = fn_def });
+    try p.expect(.semicolon);
+    return res;
+}
+
+fn parseReturnStmt(p: *Parser) !NodeIndex {
+    p.step();
+    const value = try p.parseExpr();
+    try p.expect(.semicolon);
+    const return_stmt: ReturnStmt = .{ .value = value };
+    return p.pushNode(Node{ .return_stmt = return_stmt });
 }
 
 fn parseForStmt(p: *Parser) !NodeIndex {
@@ -169,6 +166,12 @@ fn parseForStmt(p: *Parser) !NodeIndex {
         .body_len = body_len,
     };
     return p.pushNode(Node{ .for_stmt = for_stmt });
+}
+
+fn parseExprStmt(p: *Parser) Error!NodeIndex {
+    const res = p.parseExpr();
+    try p.expect(.semicolon);
+    return res;
 }
 
 fn parseExpr(p: *Parser) Error!NodeIndex {

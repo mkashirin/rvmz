@@ -13,7 +13,9 @@ pub fn main() !void {
     const gpa = arena.allocator();
 
     const source =
-        \\ 2 * 4 + 2;
+        \\ 16 + 4 / [1, 2, 3][1];
+        // \\ [1, 2, 3][1];
+        // \\ [1, 2, 3] + [4, 5, 6];
 
         // \\ an_int = 1;
         // \\ the_int = 23;
@@ -40,7 +42,7 @@ pub fn main() !void {
         // \\     print(n + 1);
         // \\ }
         // \\
-        // \\ zero_in_the_list = 0 in the_list;
+        // \\ _list = 0 in the_list;
         // \\
         // \\ selector = Select([1, 2, 3], [1, 2, 3], ==);
         // \\
@@ -63,5 +65,8 @@ pub fn main() !void {
     }
 
     var interpreter: Interpreter = try .init(tree, gpa);
-    std.debug.print("\n{any}\n", .{try interpreter.visitNode(4)});
+    std.debug.print(
+        "\n{any}\n{any}\n",
+        .{ tree.nodes[0], try interpreter.visitNode(tree.indices[0]) },
+    );
 }

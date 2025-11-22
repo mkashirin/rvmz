@@ -6,7 +6,7 @@ adpb: []const u32,
 csapb: []const u32,
 indent_level: u8,
 const Renderer = @This();
-const INDENT_SPACES = 4;
+const INDENT_SIZE = 4;
 
 pub fn init(
     writer: *std.Io.Writer,
@@ -28,11 +28,11 @@ pub fn render(r: *Renderer, root_index: NodeIndex) !void {
 }
 
 fn indent(r: *Renderer) void {
-    r.indent_level += INDENT_SPACES;
+    r.indent_level += INDENT_SIZE;
 }
 
 fn unindent(r: *Renderer) void {
-    r.indent_level -= INDENT_SPACES;
+    r.indent_level -= INDENT_SIZE;
 }
 
 fn printIndentedLine(
@@ -46,23 +46,28 @@ fn printIndentedLine(
 
 fn renderNode(r: *Renderer, index: NodeIndex) std.Io.Writer.Error!void {
     const node = r.nodes[@intCast(index)];
-    switch (node) {
-        .int => |int| try r.renderInt(int),
-        .string => |string| try r.renderString(string),
-        .identifier => |idnetfier| try r.renderIdentifier(idnetfier),
-        .bin_expr => |bin_expr| try r.renderBinExpr(bin_expr),
-        .cond_expr => |cond_expr| try r.renderCondExpr(cond_expr),
-        .assign_stmt => |assign_stmt| try r.renderAssignStmt(assign_stmt),
-        .fn_def => |fn_def| try r.renderFnDef(fn_def),
-        .return_stmt => |return_stmt| try r.renderReturnStmt(return_stmt),
-        .fn_call => |fn_call| try r.renderFnCall(fn_call),
-        .list => |list| try r.renderList(list),
-        .list_comp => |list_comp| try r.renderListComp(list_comp),
-        .dictionary => |dict| try r.renderDcitionary(dict),
-        .index_expr => |index_expr| try r.renderIndexExpr(index_expr),
-        .for_stmt => |for_stmt| try r.renderForStmt(for_stmt),
-        .selector_pred => |pred| try r.renderSelectorPred(pred),
-    }
+    try switch (node) {
+        .boolean => |boolean| r.renderBool(boolean),
+        .int => |int| r.renderInt(int),
+        .string => |string| r.renderString(string),
+        .identifier => |idnetfier| r.renderIdentifier(idnetfier),
+        .bin_expr => |bin_expr| r.renderBinExpr(bin_expr),
+        .cond_expr => |cond_expr| r.renderCondExpr(cond_expr),
+        .assign_stmt => |assign_stmt| r.renderAssignStmt(assign_stmt),
+        .fn_def => |fn_def| r.renderFnDef(fn_def),
+        .return_stmt => |return_stmt| r.renderReturnStmt(return_stmt),
+        .fn_call => |fn_call| r.renderFnCall(fn_call),
+        .list => |list| r.renderList(list),
+        .list_comp => |list_comp| r.renderListComp(list_comp),
+        .map => |map| r.renderMap(map),
+        .index_expr => |index_expr| r.renderIndexExpr(index_expr),
+        .for_stmt => |for_stmt| r.renderForStmt(for_stmt),
+        .selector_pred => |pred| r.renderSelectorPred(pred),
+    };
+}
+
+fn renderBool(r: *Renderer, node: bool) !void {
+    try r.printIndentedLine("Bool({any})", .{node});
 }
 
 fn renderInt(r: *Renderer, node: i64) !void {
@@ -78,7 +83,7 @@ fn renderIdentifier(r: *Renderer, node: []const u8) !void {
 }
 
 fn renderBinExpr(r: *Renderer, node: Parser.BinExpr) !void {
-    try r.printIndentedLine("BinExpr({s})", .{binOpLexeme(node.op)});
+    try r.printIndentedLine("BinExpr({s}):", .{binOpLexeme(node.op)});
     r.indent();
     defer r.unindent();
     try r.renderNode(node.lhs);
@@ -86,7 +91,7 @@ fn renderBinExpr(r: *Renderer, node: Parser.BinExpr) !void {
 }
 
 fn renderCondExpr(r: *Renderer, node: Parser.CondExpr) !void {
-    try r.printIndentedLine("CondExpr", .{});
+    try r.printIndentedLine("CondExpr:", .{});
     r.indent();
     defer r.unindent();
 
@@ -113,7 +118,7 @@ fn renderCondExpr(r: *Renderer, node: Parser.CondExpr) !void {
 }
 
 fn renderAssignStmt(r: *Renderer, node: Parser.AssignStmt) !void {
-    try r.printIndentedLine("AssignStmt(name: {s})", .{node.name});
+    try r.printIndentedLine("AssignStmt(name: {s}):", .{node.name});
     r.indent();
     defer r.unindent();
     try r.renderNode(node.value);
@@ -127,7 +132,7 @@ fn renderReturnStmt(r: *Renderer, node: Parser.ReturnStmt) !void {
 }
 
 fn renderFnCall(r: *Renderer, node: Parser.FnCall) !void {
-    try r.printIndentedLine("FnCall(name: {s})", .{node.fn_name});
+    try r.printIndentedLine("FnCall(name: {s}):", .{node.fn_name});
     r.indent();
     defer r.unindent();
 
@@ -172,7 +177,7 @@ fn renderFnDef(r: *Renderer, node: Parser.FnDef) !void {
 }
 
 fn renderList(r: *Renderer, node: Parser.List) !void {
-    try r.printIndentedLine("List", .{});
+    try r.printIndentedLine("List:", .{});
     r.indent();
     defer r.unindent();
 
@@ -183,7 +188,7 @@ fn renderList(r: *Renderer, node: Parser.List) !void {
 }
 
 fn renderListComp(r: *Renderer, node: Parser.ListComp) !void {
-    try r.printIndentedLine("ListComp", .{});
+    try r.printIndentedLine("ListComp:", .{});
     r.indent();
     defer r.unindent();
 
@@ -204,8 +209,8 @@ fn renderListComp(r: *Renderer, node: Parser.ListComp) !void {
     }
 }
 
-fn renderDcitionary(r: *Renderer, node: Parser.Dictionary) !void {
-    try r.printIndentedLine("Dictionary", .{});
+fn renderMap(r: *Renderer, node: Parser.Map) !void {
+    try r.printIndentedLine("Map:", .{});
     r.indent();
     defer r.unindent();
 
@@ -214,7 +219,7 @@ fn renderDcitionary(r: *Renderer, node: Parser.Dictionary) !void {
     const vals_start: usize = @intCast(node.vals_start);
     var i, var j = .{ keys_start, vals_start };
     while (i < keys_end) : (i += 1) {
-        try r.printIndentedLine("Pair", .{});
+        try r.printIndentedLine("Pair:", .{});
         r.indent();
         defer r.unindent();
         try r.renderNode(r.adpb[i]);
@@ -244,7 +249,7 @@ fn renderIndexExpr(r: *Renderer, node: Parser.IndexExpr) !void {
 }
 
 fn renderForStmt(r: *Renderer, node: Parser.ForStmt) !void {
-    try r.printIndentedLine("ForStmt(var: {s})", .{node.var_name});
+    try r.printIndentedLine("ForStmt(var: {s}):", .{node.var_name});
     r.indent();
     defer r.unindent();
 

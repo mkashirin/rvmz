@@ -1,6 +1,3 @@
-// TODO: Add bolean literals: true and false, improve error message, when
-// `Error.ExpectedToken` is returned.
-
 tokenizer: *Tokenizer,
 gpa: Allocator,
 current: Token = undefined,
@@ -16,9 +13,24 @@ pub const Error = Allocator.Error || fmt.ParseIntError || error{
     OutOfMemory,
     Overflow,
     InvalidCharacter,
-    ExpectedToken,
-    ExpectedExpression,
+
     ExpectedIdentifier,
+    ExpectedLeftParen,
+    ExpectedRightParen,
+    ExpectedRightBracket,
+    ExpectedLeftBrace,
+    ExpectedRightBrace,
+    ExpectedComma,
+    ExpectedSemicolon,
+    ExpectedColon,
+
+    ExpectedKeywordDef,
+    ExpectedKeywordIn,
+    ExpectedKeywordElse,
+
+    ExpectedSelectorPred,
+    ExpectedExpression,
+    ExpectedToken,
 };
 
 pub fn init(tokenizer: *Tokenizer, gpa: Allocator) !Parser {
@@ -109,7 +121,7 @@ fn parseAssignStmt(p: *Parser) !NodeIndex {
                 .value = value,
             };
 
-            variable = try p.pushNode(Node{ .assign_stmt = assign_stmt });
+            variable = try p.pushNode(.{ .assign_stmt = assign_stmt });
             try p.expect(.semicolon);
             p.step();
             return variable;
@@ -121,7 +133,7 @@ fn parseAssignStmt(p: *Parser) !NodeIndex {
 fn parseFnDef(p: *Parser) !NodeIndex {
     try p.expect(.keyword_def);
     p.step();
-    if (p.current.tag != .identifier) return Error.ExpectedIdentifier;
+    try p.expect(.identifier);
     const name = p.current.lexeme.?;
     p.step();
 
@@ -130,7 +142,7 @@ fn parseFnDef(p: *Parser) !NodeIndex {
     const args_start: u32 = @intCast(p.adpb.items.len);
     var args_len: u32 = 0;
     while (true) {
-        if (p.current.tag != .identifier) return Error.ExpectedIdentifier;
+        try p.expect(.identifier);
 
         const arg_node: Node = .{ .identifier = p.current.lexeme.? };
         const arg_index = try p.pushNode(arg_node);
@@ -154,6 +166,8 @@ fn parseFnDef(p: *Parser) !NodeIndex {
         try p.adpb.append(p.gpa, stmt_index);
         body_len += 1;
     }
+    // TODO: If there is no right brace indeed, the location of the cause would
+    // be bugged out. This needs to be fixed.
     try p.expect(.right_brace);
     p.step();
 
@@ -164,7 +178,7 @@ fn parseFnDef(p: *Parser) !NodeIndex {
         .body_start = body_start,
         .body_len = body_len,
     };
-    const res = p.pushNode(Node{ .fn_def = fn_def });
+    const res = p.pushNode(.{ .fn_def = fn_def });
     return res;
 }
 
@@ -174,13 +188,13 @@ fn parseReturnStmt(p: *Parser) !NodeIndex {
     try p.expect(.semicolon);
     p.step();
     const return_stmt: ReturnStmt = .{ .value = value };
-    return p.pushNode(Node{ .return_stmt = return_stmt });
+    return p.pushNode(.{ .return_stmt = return_stmt });
 }
 
 fn parseForStmt(p: *Parser) !NodeIndex {
     try p.expect(.keyword_for);
     p.step();
-    if (p.current.tag != .identifier) return Error.ExpectedIdentifier;
+    try p.expect(.identifier);
     const var_name = p.current.lexeme.?;
     p.step();
 
@@ -207,7 +221,7 @@ fn parseForStmt(p: *Parser) !NodeIndex {
         .body_start = body_start,
         .body_len = body_len,
     };
-    return p.pushNode(Node{ .for_stmt = for_stmt });
+    return p.pushNode(.{ .for_stmt = for_stmt });
 }
 
 fn parseExprStmt(p: *Parser) Error!NodeIndex {
@@ -227,7 +241,7 @@ fn parseCondExpr(p: *Parser) !NodeIndex {
     p.step();
 
     const if_cond = try p.parseAndOrIn();
-    if (p.current.tag != .keyword_else) return Error.ExpectedToken;
+    try p.expect(.keyword_else);
     p.step();
 
     const else_expr = try p.parseAndOrIn();
@@ -236,7 +250,7 @@ fn parseCondExpr(p: *Parser) !NodeIndex {
         .if_cond = if_cond,
         .else_expr = else_expr,
     };
-    return p.pushNode(Node{ .cond_expr = cond_expr });
+    return p.pushNode(.{ .cond_expr = cond_expr });
 }
 
 fn parseAndOrIn(p: *Parser) !NodeIndex {
@@ -251,7 +265,7 @@ fn parseAndOrIn(p: *Parser) !NodeIndex {
         p.step();
         const rhs = try p.parseComp();
         const bin_expr: BinExpr = .{ .lhs = lhs, .op = op, .rhs = rhs };
-        lhs = try p.pushNode(Node{ .bin_expr = bin_expr });
+        lhs = try p.pushNode(.{ .bin_expr = bin_expr });
     }
     return lhs;
 }
@@ -271,13 +285,13 @@ fn parseComp(p: *Parser) !NodeIndex {
         p.step();
         const rhs = try p.parseAddSubtr();
         const bin_expr: BinExpr = .{ .lhs = lhs, .op = op, .rhs = rhs };
-        lhs = try p.pushNode(Node{ .bin_expr = bin_expr });
+        lhs = try p.pushNode(.{ .bin_expr = bin_expr });
     }
     return lhs;
 }
 
 fn parseAddSubtr(p: *Parser) !NodeIndex {
-    var lhs = try p.parseMultDiv();
+    var lhs = try p.parseMultDivPow();
     while (true) {
         const op: BinOp = switch (p.current.tag) {
             .plus => .add,
@@ -285,40 +299,41 @@ fn parseAddSubtr(p: *Parser) !NodeIndex {
             else => break,
         };
         p.step();
-        const rhs = try p.parseMultDiv();
+        const rhs = try p.parseMultDivPow();
         const bin_expr: BinExpr = .{ .lhs = lhs, .op = op, .rhs = rhs };
-        lhs = try p.pushNode(Node{ .bin_expr = bin_expr });
+        lhs = try p.pushNode(.{ .bin_expr = bin_expr });
     }
     return lhs;
 }
 
-fn parseMultDiv(p: *Parser) !NodeIndex {
+fn parseMultDivPow(p: *Parser) !NodeIndex {
     var lhs = try p.parsePrimary();
     while (true) {
         const op: BinOp = switch (p.current.tag) {
             .star => .mult,
             .slash => .div,
+            .carrot => .power,
             else => break,
         };
         p.step();
-        const rhs = try p.parseMultDiv();
+        const rhs = try p.parseMultDivPow();
         const bin_expr: BinExpr = .{ .lhs = lhs, .op = op, .rhs = rhs };
-        lhs = try p.pushNode(Node{ .bin_expr = bin_expr });
+        lhs = try p.pushNode(.{ .bin_expr = bin_expr });
     }
     return lhs;
 }
 
 fn parsePrimary(p: *Parser) !NodeIndex {
-    var primary: NodeIndex = undefined;
-    switch (p.current.tag) {
-        .identifier => primary = try p.parseName(),
-        .int_literal => primary = try p.parseIntLiteral(),
-        .string_literal => primary = try p.parseStringLiteral(),
-        .left_bracket => primary = try p.parseList(),
-        .left_brace => primary = try p.parseDictionary(),
-        .left_paren => primary = try p.parseBoxed(),
+    var primary: NodeIndex = try switch (p.current.tag) {
+        .identifier => p.parseName(),
+        .int_literal => p.parseIntLiteral(),
+        .string_literal => p.parseStringLiteral(),
+        .left_brace => p.parseMap(),
+        .left_bracket => p.parseList(),
+        .left_paren => p.parseBoxed(),
+        .keyword_true, .keyword_false => p.parseBoolLiteral(),
         else => return Error.ExpectedExpression,
-    }
+    };
     primary = try p.parseIndex(primary);
     return primary;
 }
@@ -331,7 +346,7 @@ fn parseIndex(p: *Parser, target: NodeIndex) !NodeIndex {
         p.step();
 
         const index_expr: IndexExpr = .{ .target = target, .index = index };
-        return p.pushNode(Node{ .index_expr = index_expr });
+        return p.pushNode(.{ .index_expr = index_expr });
     }
     return target;
 }
@@ -343,7 +358,7 @@ fn parseName(p: *Parser) !NodeIndex {
     const name = p.current.lexeme.?;
     p.step();
     if (p.current.tag != .left_paren)
-        return p.pushNode(Node{ .identifier = name });
+        return p.pushNode(.{ .identifier = name });
     p.step();
 
     const args_start: u32 = @intCast(p.csapb.items.len);
@@ -360,11 +375,11 @@ fn parseName(p: *Parser) !NodeIndex {
                 .less_or_equal_than => .less_or_equal_than_pred,
                 .greater_than => .greater_than_pred,
                 .greater_or_equal_than => .greater_or_equal_than_pred,
-                else => return Error.ExpectedToken,
+                else => return Error.ExpectedSelectorPred,
             };
             p.step();
 
-            break :blk try p.pushNode(Node{ .selector_pred = pred });
+            break :blk try p.pushNode(.{ .selector_pred = pred });
         };
         try p.csapb.append(p.gpa, arg_index);
         args_len += 1;
@@ -380,25 +395,34 @@ fn parseName(p: *Parser) !NodeIndex {
         .args_start = args_start,
         .args_len = args_len,
     };
-    return p.pushNode(Node{ .fn_call = call });
+    return p.pushNode(.{ .fn_call = call });
 }
 
 fn parseIntLiteral(p: *Parser) !NodeIndex {
     const int = try fmt.parseInt(i64, p.current.lexeme.?, 10);
-    const index = try p.pushNode(Node{ .int = int });
+    const index = try p.pushNode(.{ .int = int });
     p.step();
     return index;
 }
 
 fn parseStringLiteral(p: *Parser) !NodeIndex {
     const string = p.current.lexeme.?;
-    const index = try p.pushNode(Node{ .string = string });
+    const index = try p.pushNode(.{ .string = string });
+    p.step();
+    return index;
+}
+
+fn parseBoolLiteral(p: *Parser) !NodeIndex {
+    const index = switch (p.current.tag) {
+        .keyword_true => p.pushNode(.{ .boolean = true }),
+        .keyword_false => p.pushNode(.{ .boolean = false }),
+        else => unreachable,
+    };
     p.step();
     return index;
 }
 
 fn parseList(p: *Parser) !NodeIndex {
-    try p.expect(.left_bracket);
     p.step();
 
     if (p.current.tag == .right_bracket) {
@@ -407,7 +431,7 @@ fn parseList(p: *Parser) !NodeIndex {
             .elems_start = @intCast(p.adpb.items.len),
             .elems_len = 0,
         };
-        return p.pushNode(Node{ .list = list });
+        return p.pushNode(.{ .list = list });
     }
 
     // Parse the first expression. This could be a list element OR the
@@ -417,7 +441,7 @@ fn parseList(p: *Parser) !NodeIndex {
     if (p.current.tag == .keyword_for) {
         try p.expect(.keyword_for);
         p.step();
-        if (p.current.tag != .identifier) return Error.ExpectedIdentifier;
+        try p.expect(.identifier);
         const var_name = p.current.lexeme.?;
         p.step();
 
@@ -431,7 +455,7 @@ fn parseList(p: *Parser) !NodeIndex {
             .variable = var_name,
             .iterable = iterable,
         };
-        return p.pushNode(Node{ .list_comp = list_comp });
+        return p.pushNode(.{ .list_comp = list_comp });
     }
 
     const elements_start: u32 = @intCast(p.adpb.items.len);
@@ -453,11 +477,10 @@ fn parseList(p: *Parser) !NodeIndex {
         .elems_start = elements_start,
         .elems_len = elements_len,
     };
-    return p.pushNode(Node{ .list = list });
+    return p.pushNode(.{ .list = list });
 }
 
-fn parseDictionary(p: *Parser) !NodeIndex {
-    try p.expect(.left_brace);
+fn parseMap(p: *Parser) !NodeIndex {
     p.step();
 
     var keys: std.ArrayList(u32) = .empty;
@@ -487,13 +510,13 @@ fn parseDictionary(p: *Parser) !NodeIndex {
     const values_start: u32 = @intCast(p.adpb.items.len);
     try p.adpb.appendSlice(p.gpa, values.items);
 
-    const dictionary: Dictionary = .{
+    const map: Map = .{
         .keys_start = keys_start,
         .keys_len = @intCast(keys.items.len),
         .vals_start = values_start,
         .vals_len = @intCast(values.items.len),
     };
-    return p.pushNode(Node{ .dictionary = dictionary });
+    return p.pushNode(.{ .map = map });
 }
 
 fn pushNode(p: *Parser, node: Node) Allocator.Error!NodeIndex {
@@ -519,10 +542,26 @@ fn peekNext(p: *Parser) void {
 }
 
 fn expect(p: *Parser, tag: Tag) !void {
-    if (p.current.tag != tag) return Error.ExpectedToken;
+    if (p.current.tag != tag) return switch (tag) {
+        .identifier => Error.ExpectedIdentifier,
+
+        .left_paren => Error.ExpectedLeftParen,
+        .right_paren => Error.ExpectedRightParen,
+        .right_bracket => Error.ExpectedRightBracket,
+        .left_brace => Error.ExpectedLeftBrace,
+        .right_brace => Error.ExpectedRightBrace,
+        .comma => Error.ExpectedComma,
+        .semicolon => Error.ExpectedSemicolon,
+        .colon => Error.ExpectedColon,
+
+        .keyword_def => Error.ExpectedKeywordDef,
+        .keyword_in => Error.ExpectedKeywordIn,
+        .keyword_else => Error.ExpectedKeywordElse,
+
+        else => Error.ExpectedToken,
+    };
 }
 
-// Does this need to be a separate struct?
 pub const Tree = struct {
     indices: []const u32,
     nodes: []const Node,
@@ -533,6 +572,7 @@ pub const Tree = struct {
 pub const Node = union(enum) {
     int: i64,
     string: []const u8,
+    boolean: bool,
     identifier: []const u8,
     bin_expr: BinExpr,
     cond_expr: CondExpr,
@@ -542,7 +582,7 @@ pub const Node = union(enum) {
     return_stmt: ReturnStmt,
     list: List,
     list_comp: ListComp,
-    dictionary: Dictionary,
+    map: Map,
     index_expr: IndexExpr,
     for_stmt: ForStmt,
     selector_pred: SelectorPred,
@@ -556,6 +596,7 @@ pub fn binOpLexeme(bin_op: BinOp) []const u8 {
         .subtr => "-",
         .mult => "*",
         .div => "/",
+        .power => "^",
 
         .equal => "==",
         .not_equal => "!=",
@@ -572,8 +613,9 @@ pub fn binOpLexeme(bin_op: BinOp) []const u8 {
 
 pub const BinOp = enum {
     add,
-    subtr,
     mult,
+    power,
+    subtr,
     div,
     equal,
     not_equal,
@@ -630,7 +672,7 @@ pub const ListComp = struct {
     iterable: NodeIndex,
 };
 
-pub const Dictionary = struct {
+pub const Map = struct {
     keys_start: u32,
     keys_len: u32,
     vals_start: u32,

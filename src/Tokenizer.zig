@@ -34,7 +34,7 @@ pub fn next(t: *Tokenizer) Token {
     const start = t.index;
     const char = t.step().?;
 
-    switch (char) {
+    res.tag = sw: switch (char) {
         'a'...'z', 'A'...'Z', '_' => {
             while (t.index < t.source.len) {
                 const sub = t.source[t.index];
@@ -44,8 +44,11 @@ pub fn next(t: *Tokenizer) Token {
                 }
             }
             const lexeme = t.source[start..t.index];
-            if (Token.getKeyword(lexeme)) |tag| res.tag = tag else {
-                res = .{ .tag = .identifier, .lexeme = lexeme };
+            if (Token.getKeyword(lexeme)) |tag|
+                break :sw tag
+            else {
+                res.lexeme = lexeme;
+                break :sw .identifier;
             }
         },
 
@@ -57,10 +60,8 @@ pub fn next(t: *Tokenizer) Token {
                     else => break,
                 }
             }
-            res = .{
-                .tag = .int_literal,
-                .lexeme = t.source[start..t.index],
-            };
+            res.lexeme = t.source[start..t.index];
+            break :sw .int_literal;
         },
 
         '"' => {
@@ -68,58 +69,60 @@ pub fn next(t: *Tokenizer) Token {
             while (t.index < t.source.len and
                 t.source[t.index] != '"') _ = t.step();
             _ = t.step();
-            res = .{
-                .tag = .string_literal,
-                .lexeme = t.source[start + 1 .. t.index - 1],
-            };
+            res.lexeme = t.source[start + 1 .. t.index - 1];
+            break :sw .string_literal;
         },
 
-        '+' => res.tag = .plus,
-        '-' => res.tag = .minus,
-        '*' => res.tag = .star,
-        '/' => res.tag = .slash,
+        '+' => .plus,
+        '-' => .minus,
+        '*' => .star,
+        '/' => .slash,
+        '^' => .carrot,
 
         '=' => switch (t.source[t.index]) {
             '=' => {
-                res.tag = .double_equal;
                 _ = t.step();
+                break :sw .double_equal;
             },
-            else => res.tag = .equal,
+            else => .equal,
         },
         '!' => switch (t.source[t.index]) {
             '=' => {
-                res.tag = .bang_equal;
                 _ = t.step();
+                break :sw .bang_equal;
             },
-            else => res.tag = .invalid,
+            else => .invalid,
         },
         '<' => switch (t.source[t.index]) {
             '=' => {
-                res.tag = .less_or_equal_than;
                 _ = t.step();
+                break :sw .less_or_equal_than;
             },
-            else => res.tag = .less_than,
+            else => .less_than,
         },
         '>' => switch (t.source[t.index]) {
             '=' => {
-                res.tag = .greater_or_equal_than;
                 _ = t.step();
+                break :sw .greater_or_equal_than;
             },
-            else => res.tag = .greater_than,
+            else => .greater_than,
         },
 
-        '(' => res.tag = .left_paren,
-        ')' => res.tag = .right_paren,
-        '[' => res.tag = .left_bracket,
-        ']' => res.tag = .right_bracket,
-        '{' => res.tag = .left_brace,
-        '}' => res.tag = .right_brace,
-        ',' => res.tag = .comma,
-        ';' => res.tag = .semicolon,
-        ':' => res.tag = .colon,
+        '(' => .left_paren,
+        ')' => .right_paren,
+        '[' => .left_bracket,
+        ']' => .right_bracket,
+        '{' => .left_brace,
+        '}' => .right_brace,
+        ',' => .comma,
+        ';' => .semicolon,
+        ':' => .colon,
 
-        else => res = .{ .tag = .eof, .lexeme = "EOF" },
-    }
+        else => {
+            res.lexeme = "EOF";
+            break :sw .eof;
+        },
+    };
     res.location = .{ .line = t.line, .column = t.column };
     return res;
 }
@@ -140,6 +143,7 @@ pub const Token = struct {
         minus,
         star,
         slash,
+        carrot,
         double_equal,
         bang_equal,
         less_than,
@@ -157,6 +161,8 @@ pub const Token = struct {
         colon,
 
         equal,
+        keyword_true,
+        keyword_false,
         keyword_and,
         keyword_or,
         keyword_if,
@@ -170,6 +176,8 @@ pub const Token = struct {
     pub const Location = struct { line: usize, column: usize };
 
     pub const keywords_map: std.StaticStringMap(Tag) = .initComptime(.{
+        .{ "true", .keyword_true },
+        .{ "false", .keyword_false },
         .{ "and", .keyword_and },
         .{ "or", .keyword_or },
         .{ "if", .keyword_if },

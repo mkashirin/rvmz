@@ -229,7 +229,7 @@ fn renderMap(r: *Renderer, node: Parser.Map) !void {
 }
 
 fn renderIndexExpr(r: *Renderer, node: Parser.IndexExpr) !void {
-    try r.printIndentedLine("IndexExpr", .{});
+    try r.printIndentedLine("IndexExpr:", .{});
     r.indent();
     defer r.unindent();
 
@@ -279,6 +279,10 @@ fn renderSelectorPred(r: *Renderer, node: Parser.SelectorPred) !void {
     });
     r.indent();
     defer r.unindent();
+}
+
+test {
+    _ = @import("Renderer.zig");
 }
 
 const std = @import("std");

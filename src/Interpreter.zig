@@ -57,8 +57,9 @@ fn evalIndexExpr(i: *Interpreter, node: Parser.IndexExpr) !IValue {
             var j: u16 = 0;
             while (keys_len > j) {
                 const index = try i.visitNode(keys[j]);
-                if ((try i.evalEqual(key, index)).boolean)
-                    return try i.visitNode(vals[j]);
+                const keys_match =
+                    try i.evalEqual(meta.activeTag(key), key, index);
+                if (keys_match.boolean) return try i.visitNode(vals[j]);
                 j += 1;
             }
             return error.NoSuchKey;
@@ -75,10 +76,6 @@ fn evalIndexExpr(i: *Interpreter, node: Parser.IndexExpr) !IValue {
     }
 }
 
-fn beql(a: anytype, b: anytype) bool {
-    return std.mem.eql(u8, a, b);
-}
-
 fn evalBinExpr(i: *Interpreter, node: Parser.BinExpr) anyerror!IValue {
     const lhs = try i.visitNode(node.lhs);
     const lhs_type = meta.activeTag(lhs);
@@ -86,9 +83,13 @@ fn evalBinExpr(i: *Interpreter, node: Parser.BinExpr) anyerror!IValue {
 
     const res: IValue = try switch (node.op) {
         .add => i.evalAdd(lhs_type, lhs, rhs),
-        .subtr => i.evalSubtr(lhs_type, lhs, rhs),
-        .mult => i.evalMult(lhs_type, lhs, rhs),
-        .div => i.evalDiv(lhs_type, lhs, rhs),
+        .subtr => evalSubtr(lhs_type, lhs, rhs),
+        .mult => evalMult(lhs_type, lhs, rhs),
+        .power => evalPower(lhs_type, lhs, rhs),
+        .div => evalDiv(lhs_type, lhs, rhs),
+        .equal => i.evalEqual(lhs_type, lhs, rhs),
+        .not_equal => i.evalNotEqual(lhs_type, lhs, rhs),
+
         else => return error.UnsupportedOperation,
     };
 
@@ -97,18 +98,19 @@ fn evalBinExpr(i: *Interpreter, node: Parser.BinExpr) anyerror!IValue {
 
 fn evalAdd(
     i: *Interpreter,
-    operand_type: OperandType,
+    ivalue_type: IValueType,
     lhs: IValue,
     rhs: IValue,
 ) !IValue {
-    // TODO: Index expressions.
-    const res: IValue = switch (operand_type) {
+    const res: IValue = switch (ivalue_type) {
         .int => .{ .int = lhs.int + rhs.int },
         .string => .{ .string = try std.mem.concat(
             i.gpa,
             u8,
             &.{ lhs.string, rhs.string },
         ) },
+        // Revisit this one, since indices into lists can be separated by other
+        // pointers (e.g. into some function body), this is not correct.
         .list => .{ .list = Parser.List{
             .elems_start = lhs.list.elems_start,
             .elems_len = lhs.list.elems_len + rhs.list.elems_len,
@@ -119,90 +121,99 @@ fn evalAdd(
 }
 
 fn evalSubtr(
-    i: *Interpreter,
-    node_type: OperandType,
+    ivalue_type: IValueType,
     lhs: IValue,
     rhs: IValue,
 ) !IValue {
-    // TODO: Index expressions.
-    _ = i;
-    const res: IValue = switch (node_type) {
+    const res: IValue = switch (ivalue_type) {
         .int => .{ .int = lhs.int - rhs.int },
         else => return error.UnsupportedType,
     };
     return res;
 }
 
-fn evalMult(i: *Interpreter, node_type: OperandType, lhs: IValue, rhs: IValue) !IValue {
-    // TODO: Index expressions.
-    _ = i;
-    const res: IValue = switch (node_type) {
+fn evalMult(ivalue_type: IValueType, lhs: IValue, rhs: IValue) !IValue {
+    const res: IValue = switch (ivalue_type) {
         .int => .{ .int = lhs.int * rhs.int },
         else => return error.UnsupportedType,
     };
     return res;
 }
 
-fn evalDiv(i: *Interpreter, node_type: OperandType, lhs: IValue, rhs: IValue) !IValue {
-    // TODO: Index expressions.
-    _ = i;
-    const res: IValue = switch (node_type) {
+fn evalDiv(ivalue_type: IValueType, lhs: IValue, rhs: IValue) !IValue {
+    const res: IValue = switch (ivalue_type) {
         .int => .{ .int = @divFloor(lhs.int, rhs.int) },
         else => return error.UnsupportedType,
     };
     return res;
 }
 
-fn evalPower(i: *Interpreter, node_type: OperandType, lhs: IValue, rhs: IValue) !IValue {
-    // TODO: Index expressions.
-    _ = i;
-    const res: IValue = switch (node_type) {
+fn evalPower(ivalue_type: IValueType, lhs: IValue, rhs: IValue) !IValue {
+    const res: IValue = switch (ivalue_type) {
         .int => .{ .int = lhs.int ^ rhs.int },
         else => return error.UnsupportedType,
     };
     return res;
 }
 
-fn evalEqual(i: *Interpreter, lhs: IValue, rhs: IValue) !IValue {
+fn evalEqual(
+    i: *Interpreter,
+    ivalue_type: IValueType,
+    lhs: IValue,
+    rhs: IValue,
+) !IValue {
     _ = i;
-    if (meta.activeTag(lhs) != meta.activeTag(rhs))
-        return error.OperandsTypeMismatch;
-    return switch (lhs) {
+    return switch (ivalue_type) {
         .boolean => .{ .boolean = lhs.boolean == rhs.boolean },
         .int => .{ .boolean = lhs.int == rhs.int },
         .string => .{ .boolean = std.mem.eql(u8, lhs.string, rhs.string) },
-        else => error.OperandsTypeUnsupported,
+        else => error.UnsupportedType,
     };
 }
 
-fn evalNotEqual(i: *Interpreter, lhs: IValue, rhs: IValue) !IValue {
-    _ = i;
-    _ = lhs;
-    _ = rhs;
+fn evalNotEqual(
+    i: *Interpreter,
+    ivalue_type: IValueType,
+    lhs: IValue,
+    rhs: IValue,
+) !IValue {
+    return .{ .boolean = !(try i.evalEqual(ivalue_type, lhs, rhs)).boolean };
 }
 
-fn evalLessThan(i: *Interpreter, lhs: IValue, rhs: IValue) !IValue {
-    _ = i;
-    _ = lhs;
-    _ = rhs;
+fn evalLessThan(ivalue_type: IValueType, lhs: IValue, rhs: IValue) !IValue {
+    return switch (ivalue_type) {
+        .int => .{ .boolean = lhs.int < rhs.int },
+        else => error.UnsupportedType,
+    };
 }
 
-fn evalLessOrEqualThan(i: *Interpreter, lhs: IValue, rhs: IValue) !IValue {
-    _ = i;
-    _ = lhs;
-    _ = rhs;
+fn evalLessOrEqualThan(
+    ivalue_type: IValueType,
+    lhs: IValue,
+    rhs: IValue,
+) !IValue {
+    return switch (ivalue_type) {
+        .int => .{ .boolean = lhs.int <= rhs.int },
+        else => error.UnsupportedType,
+    };
 }
 
-fn evalGreaterThan(i: *Interpreter, lhs: IValue, rhs: IValue) !IValue {
-    _ = i;
-    _ = lhs;
-    _ = rhs;
+fn evalGreaterThan(ivalue_type: IValueType, lhs: IValue, rhs: IValue) !IValue {
+    return switch (ivalue_type) {
+        .int => .{ .boolean = lhs.int > rhs.int },
+        else => error.UnsupportedType,
+    };
 }
 
-fn evalGreaterOrEqualThan(i: *Interpreter, lhs: IValue, rhs: IValue) !IValue {
-    _ = i;
-    _ = lhs;
-    _ = rhs;
+fn evalGreaterOrEqualThan(
+    ivalue_type: IValueType,
+    lhs: IValue,
+    rhs: IValue,
+) !IValue {
+    return switch (ivalue_type) {
+        .int => .{ .boolean = lhs.int >= rhs.int },
+        else => error.UnsupportedType,
+    };
 }
 
 fn evalLogicAnd(i: *Interpreter, lhs: IValue, rhs: IValue) !IValue {
@@ -232,7 +243,7 @@ const Member = union(enum) {
     dictionary: u32,
 };
 
-const OperandType = meta.Tag(IValue);
+const IValueType = meta.Tag(IValue);
 
 const std = @import("std");
 const meta = std.meta;

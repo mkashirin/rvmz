@@ -567,6 +567,13 @@ pub const Tree = struct {
     nodes: []const Node,
     adpb: []const u32,
     csapb: []const u32,
+
+    pub fn deinit(t: *Tree, gpa: Allocator) void {
+        inline for (std.meta.fields(@This())) |field| {
+            gpa.free(@field(t, field.name));
+        }
+        t.* = undefined;
+    }
 };
 
 pub const Node = union(enum) {
@@ -595,8 +602,8 @@ pub fn binOpLexeme(bin_op: BinOp) []const u8 {
         .add => "+",
         .subtr => "-",
         .mult => "*",
-        .div => "/",
         .power => "^",
+        .div => "/",
 
         .equal => "==",
         .not_equal => "!=",
@@ -613,9 +620,9 @@ pub fn binOpLexeme(bin_op: BinOp) []const u8 {
 
 pub const BinOp = enum {
     add,
+    subtr,
     mult,
     power,
-    subtr,
     div,
     equal,
     not_equal,
@@ -696,6 +703,50 @@ pub const SelectorPred = enum {
     greater_than_pred,
     greater_or_equal_than_pred,
 };
+
+test {
+    const source =
+        \\an_int = 4 / 2;
+        \\the_int = 2^3;
+        \\
+        \\
+        \\def add(a, b) {
+        \\    sum = a + b;
+        \\    return sum;
+        \\}
+        \\
+        \\int_sum = add(a_int, the_int);
+        \\print("Success") if c > 0 else print(0);
+        \\
+        \\0 if true and the_int - an_int else int_sum or "Huh?";
+        \\
+        \\a_list = [1, 2, 3];
+        \\a_dict = {"integer": 1, "list": [2, 3]};
+        \\the_list = [0, {"one": 1}, 2 + 3];
+        \\
+        \\zero = the_list[a_list[0]];
+        \\
+        \\for n in a_list {
+        \\    print(n + 1);
+        \\}
+        \\
+        \\zero_in_the_list = 0 in the_list;
+        \\
+        \\selector = Select([1, 2, 3], [3, 2, 1], !=);
+        \\
+        \\list_comp = [i + 1 if i > 0 else i for i in a_list];
+    ;
+
+    var tokenizer: Tokenizer = .init(source);
+    var parser: Parser = try .init(&tokenizer, std.testing.allocator);
+    var result = try parser.buildAst();
+    defer {
+        var tree: Parser.Tree = undefined;
+        result.unwrap(&tree);
+        tree.deinit(std.testing.allocator);
+    }
+    try std.testing.expectEqual(.ok, std.meta.activeTag(result));
+}
 
 const std = @import("std");
 const fmt = std.fmt;

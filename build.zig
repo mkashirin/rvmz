@@ -24,15 +24,23 @@ pub fn build(b: *std.Build) void {
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
+    if (b.args) |args| run_cmd.addArgs(args);
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    const exe_unit_tests = b.addTest(.{ .root_module = exe_mod });
-    const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
-
     const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_exe_unit_tests.step);
+    // Renderer includes all three files, that need to be tested:
+    // - Tokenizer.zig,
+    // - Parser.zig,
+    // - Renderere.zig (itself).
+    // Since that, the only file, that needs to be a test root is Renderer.zig.
+    const renderer_root_module = b.createModule(.{
+        .root_source_file = b.path("src/Renderer.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const renderer_unit_tests =
+        b.addTest(.{ .root_module = renderer_root_module });
+    const run_renderer_unit_testes = b.addRunArtifact(renderer_unit_tests);
+    test_step.dependOn(&run_renderer_unit_testes.step);
 }

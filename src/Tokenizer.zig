@@ -118,10 +118,7 @@ pub fn next(t: *Tokenizer) Token {
         ';' => .semicolon,
         ':' => .colon,
 
-        else => {
-            res.lexeme = "EOF";
-            break :sw .eof;
-        },
+        else => .invalid,
     };
     res.location = .{ .line = t.line, .column = t.column };
     return res;
@@ -144,6 +141,7 @@ pub const Token = struct {
         star,
         slash,
         carrot,
+        equal,
         double_equal,
         bang_equal,
         less_than,
@@ -160,7 +158,6 @@ pub const Token = struct {
         semicolon,
         colon,
 
-        equal,
         keyword_true,
         keyword_false,
         keyword_and,
@@ -211,6 +208,10 @@ fn step(t: *Tokenizer) ?u8 {
     } else if (char == '\t') t.column += 8 else t.column += 1;
     t.index += 1;
     return char;
+}
+
+test {
+    _ = @import("Tokenizer.zig");
 }
 
 const std = @import("std");

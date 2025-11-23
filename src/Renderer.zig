@@ -2,23 +2,14 @@
 /// writer. It separates the printing logic from the AST data structures.
 writer: *std.Io.Writer,
 nodes: []const Node,
-adpb: []const u32,
-csapb: []const u32,
 indent_level: u8,
 const Renderer = @This();
 const INDENT_SIZE = 4;
 
-pub fn init(
-    writer: *std.Io.Writer,
-    nodes: []const Node,
-    adpb: []const u32,
-    csapb: []const u32,
-) Renderer {
+pub fn init(writer: *std.Io.Writer, nodes: []const Node) Renderer {
     return .{
         .writer = writer,
         .nodes = nodes,
-        .adpb = adpb,
-        .csapb = csapb,
         .indent_level = 0,
     };
 }
@@ -50,7 +41,7 @@ fn renderNode(r: *Renderer, index: NodeIndex) std.Io.Writer.Error!void {
         .boolean => |boolean| r.renderBool(boolean),
         .int => |int| r.renderInt(int),
         .string => |string| r.renderString(string),
-        .identifier => |idnetfier| r.renderIdentifier(idnetfier),
+        .ident => |idnetfier| r.renderIdentifier(idnetfier),
         .bin_expr => |bin_expr| r.renderBinExpr(bin_expr),
         .cond_expr => |cond_expr| r.renderCondExpr(cond_expr),
         .assign_stmt => |assign_stmt| r.renderAssignStmt(assign_stmt),
@@ -132,17 +123,15 @@ fn renderReturnStmt(r: *Renderer, node: Parser.ReturnStmt) !void {
 }
 
 fn renderFnCall(r: *Renderer, node: Parser.FnCall) !void {
-    try r.printIndentedLine("FnCall(name: {s}):", .{node.fn_name});
+    try r.printIndentedLine("FnCall(name: {s}):", .{node.name});
     r.indent();
     defer r.unindent();
 
     try r.printIndentedLine("Args:", .{});
     r.indent();
     defer r.unindent();
-    const start: usize = @intCast(node.args_start);
-    const end = start + @as(usize, node.args_len);
-    var i: usize = start;
-    while (i < end) : (i += 1) try r.renderNode(r.csapb[i]);
+    const end = node.args.len;
+    for (0..end) |i| try r.renderNode(node.args[i]);
 }
 
 fn renderFnDef(r: *Renderer, node: Parser.FnDef) !void {
@@ -154,14 +143,11 @@ fn renderFnDef(r: *Renderer, node: Parser.FnDef) !void {
     {
         r.indent();
         defer r.unindent();
-        const args_start: usize = @intCast(node.args_start);
-        const args_end = args_start + @as(usize, node.args_len);
-        var i: usize = args_start;
+        const end = node.args.len;
         // For FnDef args, the ADPB stores an index to a simple identifier node.
-        while (i < args_end) : (i += 1) {
-            const arg_node_index = r.adpb[i];
-            const arg_node = r.nodes[@intCast(arg_node_index)];
-            try r.printIndentedLine("Arg: {s}", .{arg_node.identifier});
+        for (0..end) |i| {
+            const arg = r.nodes[@intCast(node.args[i])];
+            try r.printIndentedLine("Arg: {s}", .{arg.ident});
         }
     }
 
@@ -169,10 +155,8 @@ fn renderFnDef(r: *Renderer, node: Parser.FnDef) !void {
     {
         r.indent();
         defer r.unindent();
-        const body_start: usize = @intCast(node.body_start);
-        const body_end = body_start + @as(usize, node.body_len);
-        var i: usize = body_start;
-        while (i < body_end) : (i += 1) try r.renderNode(r.adpb[i]);
+        const end = node.body.len;
+        for (0..end) |i| try r.renderNode(node.args[i]);
     }
 }
 
@@ -181,10 +165,8 @@ fn renderList(r: *Renderer, node: Parser.List) !void {
     r.indent();
     defer r.unindent();
 
-    const start: usize = @intCast(node.elems_start);
-    const end = start + @as(usize, node.elems_len);
-    var i: usize = start;
-    while (i < end) : (i += 1) try r.renderNode(r.adpb[i]);
+    const end = node.elems.len;
+    for (0..end) |i| try r.renderNode(node.elems[i]);
 }
 
 fn renderListComp(r: *Renderer, node: Parser.ListComp) !void {
@@ -214,17 +196,14 @@ fn renderMap(r: *Renderer, node: Parser.Map) !void {
     r.indent();
     defer r.unindent();
 
-    const keys_start: usize = @intCast(node.keys_start);
-    const keys_end = keys_start + @as(usize, node.keys_len);
-    const vals_start: usize = @intCast(node.vals_start);
-    var i, var j = .{ keys_start, vals_start };
-    while (i < keys_end) : (i += 1) {
+    const keys_end = node.keys.len;
+    const values_end = node.vals.len;
+    for (0..keys_end, 0..values_end) |i, j| {
         try r.printIndentedLine("Pair:", .{});
         r.indent();
         defer r.unindent();
-        try r.renderNode(r.adpb[i]);
-        try r.renderNode(r.adpb[j]);
-        j += 1;
+        try r.renderNode(node.keys[i]);
+        try r.renderNode(node.vals[j]);
     }
 }
 
@@ -264,12 +243,8 @@ fn renderForStmt(r: *Renderer, node: Parser.ForStmt) !void {
     {
         r.indent();
         defer r.unindent();
-        const body_start: usize = @intCast(node.body_start);
-        const body_end = body_start + @as(usize, node.body_len);
-        var i: usize = body_start;
-        while (i < body_end) : (i += 1) {
-            try r.renderNode(r.adpb[i]);
-        }
+        const end = node.body.len;
+        for (0..end) |i| try r.renderNode(node.body[i]);
     }
 }
 

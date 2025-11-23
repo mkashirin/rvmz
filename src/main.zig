@@ -15,9 +15,10 @@ pub fn main() !void {
     const source =
         // \\ 16 + 4 / [1, 2, 3][1];
         // \\ [1, 2, 3][1];
-        // \\ [1, 2, 3] + [4, 5, 6];
-        \\ 1 + {"one": 1, "two": 2}["one"];
+        \\ [1, 2, 3] + [4, 5, 6];
+        // \\ 1 + {"one": 1, "two": 2}["two"];
         // \\ 1 == 2;
+        // \\ "2" + "2";
     ;
 
     var tokenizer: Tokenizer = .init(source);
@@ -30,16 +31,13 @@ pub fn main() !void {
     const writer = std.Progress.lockStderrWriter(&buffer);
     defer std.Progress.unlockStderrWriter();
 
-    var renderer = Renderer.init(writer, tree.nodes, tree.adpb, tree.csapb);
+    var renderer: Renderer = .init(writer, tree.nodes);
     std.debug.print("Parsed AST (index-backed):\n", .{});
-    for (tree.indices) |node| {
-        // std.debug.print("index: {d}\n", .{node});
-        try renderer.render(node);
-    }
+    for (tree.indices) |node| try renderer.render(node);
 
-    var interpreter: Interpreter = try .init(tree, gpa);
+    var interpreter: Interpreter = .init(tree, gpa);
     std.debug.print(
         "\n{any}\n{any}\n",
-        .{ tree.nodes[0], try interpreter.visitNode(tree.indices[0]) },
+        .{ tree.nodes[0], (try interpreter.visitNode(tree.indices[0])) },
     );
 }

@@ -35,49 +35,21 @@ pub fn next(t: *Tokenizer) Token {
     const char = t.step().?;
 
     res.tag = sw: switch (char) {
-        'a'...'z', 'A'...'Z', '_' => {
-            while (t.index < t.source.len) {
-                const sub = t.source[t.index];
-                switch (sub) {
-                    'a'...'z', 'A'...'Z', '0'...'9', '_' => _ = t.step(),
-                    else => break,
-                }
-            }
-            const lexeme = t.source[start..t.index];
-            if (Token.getKeyword(lexeme)) |tag|
-                break :sw tag
-            else {
-                res.lexeme = lexeme;
-                break :sw .identifier;
-            }
-        },
-
-        '0'...'9' => {
-            while (t.index < t.source.len) {
-                const digit = t.source[t.index];
-                switch (digit) {
-                    '0'...'9' => _ = t.step(),
-                    else => break,
-                }
-            }
-            res.lexeme = t.source[start..t.index];
-            break :sw .int_literal;
-        },
-
-        '"' => {
-            _ = t.step();
-            while (t.index < t.source.len and
-                t.source[t.index] != '"') _ = t.step();
-            _ = t.step();
-            res.lexeme = t.source[start + 1 .. t.index - 1];
-            break :sw .string_literal;
-        },
-
         '+' => .plus,
         '-' => .minus,
         '*' => .star,
         '/' => .slash,
         '^' => .carrot,
+
+        '(' => .left_paren,
+        ')' => .right_paren,
+        '[' => .left_bracket,
+        ']' => .right_bracket,
+        '{' => .left_brace,
+        '}' => .right_brace,
+        ',' => .comma,
+        ';' => .semicolon,
+        ':' => .colon,
 
         '=' => switch (t.source[t.index]) {
             '=' => {
@@ -108,15 +80,43 @@ pub fn next(t: *Tokenizer) Token {
             else => .greater_than,
         },
 
-        '(' => .left_paren,
-        ')' => .right_paren,
-        '[' => .left_bracket,
-        ']' => .right_bracket,
-        '{' => .left_brace,
-        '}' => .right_brace,
-        ',' => .comma,
-        ';' => .semicolon,
-        ':' => .colon,
+        '"' => {
+            _ = t.step();
+            while (t.index < t.source.len and
+                t.source[t.index] != '"') _ = t.step();
+            _ = t.step();
+            res.lexeme = t.source[start + 1 .. t.index - 1];
+            break :sw .string_literal;
+        },
+
+        '0'...'9' => {
+            while (t.index < t.source.len) {
+                const digit = t.source[t.index];
+                switch (digit) {
+                    '0'...'9' => _ = t.step(),
+                    else => break,
+                }
+            }
+            res.lexeme = t.source[start..t.index];
+            break :sw .int_literal;
+        },
+
+        'a'...'z', 'A'...'Z', '_' => {
+            while (t.index < t.source.len) {
+                const sub = t.source[t.index];
+                switch (sub) {
+                    'a'...'z', 'A'...'Z', '0'...'9', '_' => _ = t.step(),
+                    else => break,
+                }
+            }
+            const lexeme = t.source[start..t.index];
+            if (Token.getKeyword(lexeme)) |tag|
+                break :sw tag
+            else {
+                res.lexeme = lexeme;
+                break :sw .ident;
+            }
+        },
 
         else => .invalid,
     };
@@ -130,24 +130,11 @@ pub const Token = struct {
     location: Location = undefined,
 
     pub const Tag = enum {
-        eof,
-        invalid,
-        identifier,
-        int_literal,
-        string_literal,
-
         plus,
         minus,
         star,
         slash,
         carrot,
-        equal,
-        double_equal,
-        bang_equal,
-        less_than,
-        less_or_equal_than,
-        greater_than,
-        greater_or_equal_than,
         left_paren,
         right_paren,
         left_bracket,
@@ -157,6 +144,19 @@ pub const Token = struct {
         comma,
         semicolon,
         colon,
+        equal,
+        double_equal,
+        bang_equal,
+        less_than,
+        less_or_equal_than,
+        greater_than,
+        greater_or_equal_than,
+
+        eof,
+        invalid,
+        ident,
+        string_literal,
+        int_literal,
 
         keyword_true,
         keyword_false,
@@ -205,7 +205,10 @@ fn step(t: *Tokenizer) ?u8 {
     if (char == '\n') {
         t.column = 1;
         t.line += 1;
-    } else if (char == '\t') t.column += 8 else t.column += 1;
+    } else if (char == '\t')
+        t.column += 8
+    else
+        t.column += 1;
     t.index += 1;
     return char;
 }

@@ -1,7 +1,8 @@
 const std = @import("std");
 
 const Tokenizer = @import("Tokenizer.zig");
-const Parser = @import("Parser.zig");
+const ast = @import("ast.zig");
+const Parser = ast.Parser;
 const Node = Parser.Node;
 const NodeIndex = Parser.NodeIndex;
 const Renderer = @import("Renderer.zig");
@@ -23,9 +24,16 @@ pub fn main() !void {
 
     var tokenizer: Tokenizer = .init(source);
     var parser: Parser = try .init(&tokenizer, gpa);
-    var result = try parser.buildAst();
-    var tree: Parser.Tree = undefined;
-    result.unwrap(&tree);
+    var tree = parser.buildAst() catch |err| {
+        const err_location = parser.current.location;
+        std.debug.print(
+            "Error at line {d}, column {d}: {s}\n",
+            .{ err_location.line, err_location.column, @errorName(err) },
+        );
+        parser.deinit();
+        return err;
+    };
+    defer tree.deinit(gpa);
 
     var buffer: [1024]u8 = undefined;
     const writer = std.Progress.lockStderrWriter(&buffer);

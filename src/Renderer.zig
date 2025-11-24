@@ -73,7 +73,7 @@ fn renderIdentifier(r: *Renderer, node: []const u8) !void {
     try r.printIndentedLine("Identifier({s})", .{node});
 }
 
-fn renderBinExpr(r: *Renderer, node: Parser.BinExpr) !void {
+fn renderBinExpr(r: *Renderer, node: ast.BinExpr) !void {
     try r.printIndentedLine("BinExpr({s}):", .{binOpLexeme(node.op)});
     r.indent();
     defer r.unindent();
@@ -81,7 +81,7 @@ fn renderBinExpr(r: *Renderer, node: Parser.BinExpr) !void {
     try r.renderNode(node.rhs);
 }
 
-fn renderCondExpr(r: *Renderer, node: Parser.CondExpr) !void {
+fn renderCondExpr(r: *Renderer, node: ast.CondExpr) !void {
     try r.printIndentedLine("CondExpr:", .{});
     r.indent();
     defer r.unindent();
@@ -108,21 +108,21 @@ fn renderCondExpr(r: *Renderer, node: Parser.CondExpr) !void {
     }
 }
 
-fn renderAssignStmt(r: *Renderer, node: Parser.AssignStmt) !void {
+fn renderAssignStmt(r: *Renderer, node: ast.AssignStmt) !void {
     try r.printIndentedLine("AssignStmt(name: {s}):", .{node.name});
     r.indent();
     defer r.unindent();
     try r.renderNode(node.value);
 }
 
-fn renderReturnStmt(r: *Renderer, node: Parser.ReturnStmt) !void {
+fn renderReturnStmt(r: *Renderer, node: ast.ReturnStmt) !void {
     try r.printIndentedLine("ReturnStmt:", .{});
     r.indent();
     defer r.unindent();
     try r.renderNode(node.value);
 }
 
-fn renderFnCall(r: *Renderer, node: Parser.FnCall) !void {
+fn renderFnCall(r: *Renderer, node: ast.FnCall) !void {
     try r.printIndentedLine("FnCall(name: {s}):", .{node.name});
     r.indent();
     defer r.unindent();
@@ -134,7 +134,7 @@ fn renderFnCall(r: *Renderer, node: Parser.FnCall) !void {
     for (0..end) |i| try r.renderNode(node.args[i]);
 }
 
-fn renderFnDef(r: *Renderer, node: Parser.FnDef) !void {
+fn renderFnDef(r: *Renderer, node: ast.FnDef) !void {
     try r.printIndentedLine("FnDef(name: {s})", .{node.name});
     r.indent();
     defer r.unindent();
@@ -160,7 +160,7 @@ fn renderFnDef(r: *Renderer, node: Parser.FnDef) !void {
     }
 }
 
-fn renderList(r: *Renderer, node: Parser.List) !void {
+fn renderList(r: *Renderer, node: ast.List) !void {
     try r.printIndentedLine("List:", .{});
     r.indent();
     defer r.unindent();
@@ -169,7 +169,7 @@ fn renderList(r: *Renderer, node: Parser.List) !void {
     for (0..end) |i| try r.renderNode(node.elems[i]);
 }
 
-fn renderListComp(r: *Renderer, node: Parser.ListComp) !void {
+fn renderListComp(r: *Renderer, node: ast.ListComp) !void {
     try r.printIndentedLine("ListComp:", .{});
     r.indent();
     defer r.unindent();
@@ -191,7 +191,7 @@ fn renderListComp(r: *Renderer, node: Parser.ListComp) !void {
     }
 }
 
-fn renderMap(r: *Renderer, node: Parser.Map) !void {
+fn renderMap(r: *Renderer, node: ast.Map) !void {
     try r.printIndentedLine("Map:", .{});
     r.indent();
     defer r.unindent();
@@ -207,7 +207,7 @@ fn renderMap(r: *Renderer, node: Parser.Map) !void {
     }
 }
 
-fn renderIndexExpr(r: *Renderer, node: Parser.IndexExpr) !void {
+fn renderIndexExpr(r: *Renderer, node: ast.IndexExpr) !void {
     try r.printIndentedLine("IndexExpr:", .{});
     r.indent();
     defer r.unindent();
@@ -227,7 +227,7 @@ fn renderIndexExpr(r: *Renderer, node: Parser.IndexExpr) !void {
     }
 }
 
-fn renderForStmt(r: *Renderer, node: Parser.ForStmt) !void {
+fn renderForStmt(r: *Renderer, node: ast.ForStmt) !void {
     try r.printIndentedLine("ForStmt(var: {s}):", .{node.var_name});
     r.indent();
     defer r.unindent();
@@ -248,7 +248,7 @@ fn renderForStmt(r: *Renderer, node: Parser.ForStmt) !void {
     }
 }
 
-fn renderSelectorPred(r: *Renderer, node: Parser.SelectorPred) !void {
+fn renderSelectorPred(r: *Renderer, node: ast.SelectorPred) !void {
     try r.printIndentedLine("SelectorPred({s})", .{
         selectorPredLexeme(node),
     });
@@ -263,8 +263,8 @@ test {
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const Parser = @import("Parser.zig");
-const Node = Parser.Node;
-const NodeIndex = Parser.NodeIndex;
-const binOpLexeme = Parser.binOpLexeme;
-const selectorPredLexeme = Parser.selectorPredLexeme;
+const ast = @import("ast.zig");
+const Node = ast.Node;
+const NodeIndex = ast.NodeIndex;
+const binOpLexeme = ast.binOpLexeme;
+const selectorPredLexeme = ast.selectorPredLexeme;

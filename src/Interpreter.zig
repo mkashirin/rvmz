@@ -23,8 +23,8 @@ const IValue = union(enum) {
     int: i64,
     string: []const u8,
     boolean: bool,
-    list: Parser.List,
-    map: Parser.Map,
+    list: ast.List,
+    map: ast.Map,
 };
 
 pub fn visitNode(i: *Interpreter, index: NodeIndex) anyerror!IValue {
@@ -40,7 +40,7 @@ pub fn visitNode(i: *Interpreter, index: NodeIndex) anyerror!IValue {
     return res;
 }
 
-fn evalIndexExpr(i: *Interpreter, node: Parser.IndexExpr) !IValue {
+fn evalIndexExpr(i: *Interpreter, node: ast.IndexExpr) !IValue {
     const target: Node = i.tree.nodes[@intCast(node.target)];
     switch (target) {
         .map => |map| {
@@ -62,7 +62,7 @@ fn evalIndexExpr(i: *Interpreter, node: Parser.IndexExpr) !IValue {
     }
 }
 
-fn evalBinExpr(i: *Interpreter, node: Parser.BinExpr) anyerror!IValue {
+fn evalBinExpr(i: *Interpreter, node: ast.BinExpr) anyerror!IValue {
     const lhs = try i.visitNode(node.lhs);
     const lhs_type = meta.activeTag(lhs);
     const rhs = try i.visitNode(node.rhs);
@@ -155,6 +155,7 @@ fn evalEqual(
         .boolean => .{ .boolean = lhs.boolean == rhs.boolean },
         .int => .{ .boolean = lhs.int == rhs.int },
         .string => .{ .boolean = std.mem.eql(u8, lhs.string, rhs.string) },
+
         else => error.UnsupportedType,
     };
 }
@@ -236,7 +237,7 @@ const std = @import("std");
 const meta = std.meta;
 const Allocator = std.mem.Allocator;
 
-const Parser = @import("Parser.zig");
-const Tree = Parser.Tree;
-const Node = Parser.Node;
-const NodeIndex = Parser.NodeIndex;
+const ast = @import("ast.zig");
+const Tree = ast.Tree;
+const Node = ast.Node;
+const NodeIndex = ast.NodeIndex;

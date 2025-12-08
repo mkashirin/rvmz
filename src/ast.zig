@@ -7,10 +7,10 @@ pub const Parser = struct {
     const Self = @This();
 
     pub fn init(tokenizer: *Tokenizer, gpa: Allocator) !Self {
-        var p: Self = .{ .tokenizer = tokenizer, .gpa = gpa };
-        p.step();
-        p.peekNext();
-        return p;
+        var self: Self = .{ .tokenizer = tokenizer, .gpa = gpa };
+        self.step();
+        self.peekNext();
+        return self;
     }
 
     pub fn deinit(self: *Self) void {
@@ -19,10 +19,10 @@ pub const Parser = struct {
         self.* = undefined;
     }
 
-    pub fn buildAst(self: *Self) Error!Tree {
-        var indices_ = NodeIndexList.empty;
+    pub fn buildTree(self: *Self) Error!Tree {
+        var indices_ = IndexArrayList.empty;
         while (self.current.tag != .eof) {
-            const stmt_index = try self.parseStmt();
+            const stmt_index = try self.stmt();
             try indices_.append(self.gpa, stmt_index);
         }
         const indices = try indices_.toOwnedSlice(self.gpa);
@@ -30,22 +30,22 @@ pub const Parser = struct {
         return .{ .indices = indices, .nodes = nodes };
     }
 
-    fn parseStmt(self: *Self) Error!NodeIndex {
+    fn stmt(self: *Self) Error!Index {
         self.peekNext();
         return switch (self.current.tag) {
             .ident => switch (self.peeked.tag) {
-                .equal => self.parseAssignStmt(),
-                else => self.parseExprStmt(),
+                .equal => self.assignStmt(),
+                else => self.exprStmt(),
             },
-            .keyword_def => self.parseFnDef(),
-            .keyword_return => self.parseReturnStmt(),
-            .keyword_for => self.parseForStmt(),
-            else => self.parseExprStmt(),
+            .keyword_def => self.fnDef(),
+            .keyword_return => self.returnStmt(),
+            .keyword_for => self.forStmt(),
+            else => self.exprStmt(),
         };
     }
 
-    fn parseAssignStmt(self: *Self) !NodeIndex {
-        var variable = try self.parseCondExpr();
+    fn assignStmt(self: *Self) !Index {
+        var variable = try self.condExpr();
         if (self.current.tag != .equal) return variable;
 
         const node = self.nodes.items[@intCast(variable)];
@@ -53,7 +53,7 @@ pub const Parser = struct {
             .ident => |name| {
                 self.step();
 
-                const value = try self.parseAssignStmt();
+                const value = try self.assignStmt();
                 const assign_stmt: AssignStmt = .{
                     .name = name,
                     .value = value,
@@ -68,7 +68,7 @@ pub const Parser = struct {
         }
     }
 
-    fn parseFnDef(self: *Self) !NodeIndex {
+    fn fnDef(self: *Self) !Index {
         try self.expectToken(.keyword_def);
         self.step();
 
@@ -78,7 +78,7 @@ pub const Parser = struct {
 
         try self.expectToken(.left_paren);
         self.step();
-        var args = NodeIndexList.empty;
+        var args = IndexArrayList.empty;
         while (true) {
             try self.expectToken(.ident);
             const arg = try self.pushNode(.{ .ident = self.current.lexeme.? });
@@ -94,11 +94,11 @@ pub const Parser = struct {
         try self.expectToken(.left_brace);
         self.step();
 
-        var body_nodes = NodeIndexList.empty;
+        var body_nodes = IndexArrayList.empty;
         // TODO: If there is no right brace indeed, the location of the cause
         // would be bugged out. This needs to be fixed.
         while (self.current.tag != .right_brace) {
-            const stmt_index = try self.parseStmt();
+            const stmt_index = try self.stmt();
             try body_nodes.append(self.gpa, stmt_index);
         }
         self.step();
@@ -112,9 +112,9 @@ pub const Parser = struct {
         return res;
     }
 
-    fn parseReturnStmt(self: *Self) !NodeIndex {
+    fn returnStmt(self: *Self) !Index {
         self.step();
-        const value = try self.parseExpr();
+        const value = try self.expr();
         try self.expectToken(.semicolon);
 
         self.step();
@@ -122,7 +122,7 @@ pub const Parser = struct {
         return self.pushNode(.{ .return_stmt = return_stmt });
     }
 
-    fn parseForStmt(self: *Self) !NodeIndex {
+    fn forStmt(self: *Self) !Index {
         try self.expectToken(.keyword_for);
         self.step();
 
@@ -133,13 +133,13 @@ pub const Parser = struct {
         try self.expectToken(.keyword_in);
         self.step();
 
-        const iterable = try self.parseExpr();
+        const iterable = try self.expr();
         try self.expectToken(.left_brace);
         self.step();
 
-        var body_nodes = NodeIndexList.empty;
+        var body_nodes = IndexArrayList.empty;
         while (self.current.tag != .right_brace) {
-            const stmt_index = try self.parseStmt();
+            const stmt_index = try self.stmt();
             try body_nodes.append(self.gpa, stmt_index);
         }
         self.step();
@@ -152,27 +152,27 @@ pub const Parser = struct {
         return self.pushNode(.{ .for_stmt = for_stmt });
     }
 
-    fn parseExprStmt(self: *Self) Error!NodeIndex {
-        const res = self.parseExpr();
+    fn exprStmt(self: *Self) Error!Index {
+        const res = self.expr();
         try self.expectToken(.semicolon);
         self.step();
         return res;
     }
 
-    fn parseExpr(self: *Self) Error!NodeIndex {
-        return self.parseCondExpr();
+    fn expr(self: *Self) Error!Index {
+        return self.condExpr();
     }
 
-    fn parseCondExpr(self: *Self) !NodeIndex {
-        const then = try self.parseAndOrIn();
+    fn condExpr(self: *Self) !Index {
+        const then = try self.andOrInExpr();
         if (self.current.tag != .keyword_if) return then;
         self.step();
 
-        const if_cond = try self.parseAndOrIn();
+        const if_cond = try self.andOrInExpr();
         try self.expectToken(.keyword_else);
         self.step();
 
-        const else_expr = try self.parseAndOrIn();
+        const else_expr = try self.andOrInExpr();
         const cond_expr: CondExpr = .{
             .then = then,
             .if_cond = if_cond,
@@ -181,8 +181,8 @@ pub const Parser = struct {
         return self.pushNode(.{ .cond_expr = cond_expr });
     }
 
-    fn parseAndOrIn(self: *Self) !NodeIndex {
-        var lhs = try self.parseComp();
+    fn andOrInExpr(self: *Self) !Index {
+        var lhs = try self.comparisonExpr();
         while (true) {
             const op: BinOp = switch (self.current.tag) {
                 .keyword_and => .logic_and,
@@ -192,15 +192,15 @@ pub const Parser = struct {
             };
             self.step();
 
-            const rhs = try self.parseComp();
+            const rhs = try self.comparisonExpr();
             const bin_expr: BinExpr = .{ .lhs = lhs, .op = op, .rhs = rhs };
             lhs = try self.pushNode(.{ .bin_expr = bin_expr });
         }
         return lhs;
     }
 
-    fn parseComp(self: *Self) !NodeIndex {
-        var lhs = try self.parseAddSubtr();
+    fn comparisonExpr(self: *Self) !Index {
+        var lhs = try self.addSubtrExpr();
         while (true) {
             const op: BinOp = switch (self.current.tag) {
                 .double_equal => .equal,
@@ -213,15 +213,15 @@ pub const Parser = struct {
             };
             self.step();
 
-            const rhs = try self.parseAddSubtr();
+            const rhs = try self.addSubtrExpr();
             const bin_expr: BinExpr = .{ .lhs = lhs, .op = op, .rhs = rhs };
             lhs = try self.pushNode(.{ .bin_expr = bin_expr });
         }
         return lhs;
     }
 
-    fn parseAddSubtr(self: *Self) !NodeIndex {
-        var lhs = try self.parseMultDivPow();
+    fn addSubtrExpr(self: *Self) !Index {
+        var lhs = try self.multDivPowExpr();
         while (true) {
             const op: BinOp = switch (self.current.tag) {
                 .plus => .add,
@@ -230,15 +230,15 @@ pub const Parser = struct {
             };
             self.step();
 
-            const rhs = try self.parseMultDivPow();
+            const rhs = try self.multDivPowExpr();
             const bin_expr: BinExpr = .{ .lhs = lhs, .op = op, .rhs = rhs };
             lhs = try self.pushNode(.{ .bin_expr = bin_expr });
         }
         return lhs;
     }
 
-    fn parseMultDivPow(self: *Self) !NodeIndex {
-        var lhs = try self.parsePrimary();
+    fn multDivPowExpr(self: *Self) !Index {
+        var lhs = try self.primaryExpr();
         while (true) {
             const op: BinOp = switch (self.current.tag) {
                 .star => .mult,
@@ -248,40 +248,37 @@ pub const Parser = struct {
             };
             self.step();
 
-            const rhs = try self.parseMultDivPow();
+            const rhs = try self.multDivPowExpr();
             const bin_expr: BinExpr = .{ .lhs = lhs, .op = op, .rhs = rhs };
             lhs = try self.pushNode(.{ .bin_expr = bin_expr });
         }
         return lhs;
     }
 
-    fn parsePrimary(self: *Self) !NodeIndex {
-        var primary: NodeIndex = try switch (self.current.tag) {
-            .ident => self.parseName(),
-            .int_literal => self.parseIntLiteral(),
-            .string_literal => self.parseStringLiteral(),
-            .left_brace => self.parseMap(),
-            .left_bracket => self.parseList(),
-            .left_paren => self.parseBoxed(),
-            .keyword_true, .keyword_false => self.parseBoolLiteral(),
+    fn primaryExpr(self: *Self) !Index {
+        var primary: Index = try switch (self.current.tag) {
+            .ident => self.nameExpr(),
+            .int_literal => self.intLiteral(),
+            .string_literal => self.stringLiteral(),
+            .left_brace => self.mapLiteral(),
+            .left_bracket => self.listLiteral(),
+            .left_paren => self.boxedExpr(),
+            .keyword_true, .keyword_false => self.boolLiteral(),
             else => return Error.ExpectedExpression,
         };
-        primary = try self.parseIndex(primary);
+        primary = try self.indexExpr(primary);
         return primary;
     }
 
-    fn parseIndex(self: *Self, target: NodeIndex) !NodeIndex {
+    fn indexExpr(self: *Self, target: Index) !Index {
         while (self.current.tag == .left_bracket) {
             self.step();
 
-            const index = try self.parseExpr();
+            const index = try self.expr();
             try self.expectToken(.right_bracket);
             self.step();
 
-            const index_expr: IndexExpr = .{
-                .target = target,
-                .index = index,
-            };
+            const index_expr: IndexExpr = .{ .target = target, .index = index };
             return self.pushNode(.{ .index_expr = index_expr });
         }
         return target;
@@ -291,7 +288,7 @@ pub const Parser = struct {
     /// and function calls, it also targets the only language built-in, that is
     /// capable of accepting bare comparison predicates as an argument
     /// (`Select` function).
-    fn parseName(self: *Self) !NodeIndex {
+    fn nameExpr(self: *Self) !Index {
         const name = self.current.lexeme.?;
         self.step();
 
@@ -299,9 +296,9 @@ pub const Parser = struct {
             return self.pushNode(.{ .ident = name });
         self.step();
 
-        var args = NodeIndexList.empty;
+        var args = IndexArrayList.empty;
         while (true) {
-            const arg = self.parseExpr() catch blk: {
+            const arg = self.expr() catch blk: {
                 if (!std.mem.eql(u8, name, "Select") or args.items.len != 2)
                     return Error.ExpectedExpression;
 
@@ -331,21 +328,21 @@ pub const Parser = struct {
         return self.pushNode(.{ .fn_call = call });
     }
 
-    fn parseIntLiteral(self: *Self) !NodeIndex {
+    fn intLiteral(self: *Self) !Index {
         const int = try fmt.parseInt(i64, self.current.lexeme.?, 10);
         const index = try self.pushNode(.{ .int = int });
         self.step();
         return index;
     }
 
-    fn parseStringLiteral(self: *Self) !NodeIndex {
+    fn stringLiteral(self: *Self) !Index {
         const string = self.current.lexeme.?;
         const index = try self.pushNode(.{ .string = string });
         self.step();
         return index;
     }
 
-    fn parseBoolLiteral(self: *Self) !NodeIndex {
+    fn boolLiteral(self: *Self) !Index {
         const index = switch (self.current.tag) {
             .keyword_true => self.pushNode(.{ .boolean = true }),
             .keyword_false => self.pushNode(.{ .boolean = false }),
@@ -355,16 +352,16 @@ pub const Parser = struct {
         return index;
     }
 
-    fn parseList(self: *Self) !NodeIndex {
+    fn listLiteral(self: *Self) !Index {
         self.step();
-        const expr = try self.parseExpr();
+        const expr_ = try self.expr();
         if (self.current.tag != .keyword_for) {
-            var elems = NodeIndexList.empty;
-            try elems.append(self.gpa, expr);
+            var elems = IndexArrayList.empty;
+            try elems.append(self.gpa, expr_);
             while (self.current.tag == .comma) {
                 self.step();
                 if (self.current.tag == .right_bracket) break;
-                const elem = try self.parseExpr();
+                const elem = try self.expr();
                 try elems.append(self.gpa, elem);
             }
             self.step();
@@ -375,34 +372,33 @@ pub const Parser = struct {
 
         self.step();
         try self.expectToken(.ident);
-        const var_name = self.current.lexeme.?;
+        const variable = self.current.lexeme.?;
         self.step();
 
         try self.expectToken(.keyword_in);
         self.step();
 
-        const iterable = try self.parseExpr();
+        const iterable = try self.expr();
         try self.expectToken(.right_bracket);
         self.step();
         const list_comp: ListComp = .{
-            .expr = expr,
-            .variable = var_name,
+            .expr = expr_,
+            .variable = variable,
             .iterable = iterable,
         };
         return self.pushNode(.{ .list_comp = list_comp });
     }
 
-    fn parseMap(p: *Self) !NodeIndex {
+    fn mapLiteral(p: *Self) !Index {
         p.step();
-        var keys = NodeIndexList.empty;
-        var vals = NodeIndexList.empty;
+        var keys, var vals = .{ IndexArrayList.empty, IndexArrayList.empty };
         while (true) {
-            const key = try p.parseExpr();
+            const key = try p.expr();
             try keys.append(p.gpa, key);
             try p.expectToken(.colon);
             p.step();
 
-            const val = try p.parseExpr();
+            const val = try p.expr();
             try vals.append(p.gpa, val);
             if (p.current.tag == .right_brace) break;
             try p.expectToken(.comma);
@@ -416,15 +412,15 @@ pub const Parser = struct {
         return p.pushNode(.{ .map = map });
     }
 
-    fn pushNode(self: *Self, node: Node) Allocator.Error!NodeIndex {
+    fn pushNode(self: *Self, node: Node) Allocator.Error!Index {
         try self.nodes.append(self.gpa, node);
-        const index: NodeIndex = @intCast(self.nodes.items.len - 1);
+        const index: Index = @intCast(self.nodes.items.len - 1);
         return index;
     }
 
-    fn parseBoxed(self: *Self) !NodeIndex {
+    fn boxedExpr(self: *Self) !Index {
         self.step();
-        const index = try self.parseExpr();
+        const index = try self.expr();
         try self.expectToken(.right_paren);
 
         self.step();
@@ -459,30 +455,27 @@ pub const Parser = struct {
             else => Error.ExpectedToken,
         };
     }
+};
 
-    const Error = Allocator.Error || fmt.ParseIntError || error{
-        OutOfMemory,
-        Overflow,
-        InvalidCharacter,
+pub const Error = Allocator.Error || fmt.ParseIntError || ParseError;
+const ParseError = error{
+    ExpectedIdentifier,
+    ExpectedLeftParen,
+    ExpectedRightParen,
+    ExpectedRightBracket,
+    ExpectedLeftBrace,
+    ExpectedRightBrace,
+    ExpectedComma,
+    ExpectedSemicolon,
+    ExpectedColon,
 
-        ExpectedIdentifier,
-        ExpectedLeftParen,
-        ExpectedRightParen,
-        ExpectedRightBracket,
-        ExpectedLeftBrace,
-        ExpectedRightBrace,
-        ExpectedComma,
-        ExpectedSemicolon,
-        ExpectedColon,
+    ExpectedKeywordDef,
+    ExpectedKeywordIn,
+    ExpectedKeywordElse,
 
-        ExpectedKeywordDef,
-        ExpectedKeywordIn,
-        ExpectedKeywordElse,
-
-        ExpectedSelectorPred,
-        ExpectedExpression,
-        ExpectedToken,
-    };
+    ExpectedSelectorPred,
+    ExpectedExpression,
+    ExpectedToken,
 };
 
 pub const Tree = struct {
@@ -526,7 +519,7 @@ pub const Node = union(enum) {
     selector_pred: SelectorPred,
 };
 
-pub const BinExpr = struct { lhs: NodeIndex, op: BinOp, rhs: NodeIndex };
+pub const BinExpr = struct { lhs: Index, op: BinOp, rhs: Index };
 
 pub fn binOpLexeme(bin_op: BinOp) []const u8 {
     return switch (bin_op) {
@@ -577,43 +570,43 @@ pub fn selectorPredLexeme(pred: SelectorPred) []const u8 {
     };
 }
 
-pub const FnCall = struct { name: []const u8, args: []const NodeIndex };
+pub const FnCall = struct { name: []const u8, args: []const Index };
 
 pub const CondExpr = struct {
-    then: NodeIndex,
-    if_cond: NodeIndex,
-    else_expr: NodeIndex,
+    then: Index,
+    if_cond: Index,
+    else_expr: Index,
 };
-pub const AssignStmt = struct { name: []const u8, value: NodeIndex };
+pub const AssignStmt = struct { name: []const u8, value: Index };
 
 pub const FnDef = struct {
     name: []const u8,
-    args: []const NodeIndex,
-    body: []const NodeIndex,
+    args: []const Index,
+    body: []const Index,
 };
 
-pub const ReturnStmt = struct { value: NodeIndex };
+pub const ReturnStmt = struct { value: Index };
 
 pub const ForStmt = struct {
     var_name: []const u8,
-    iterable: NodeIndex,
-    body: []const NodeIndex,
+    iterable: Index,
+    body: []const Index,
 };
 
-pub const List = struct { elems: []const NodeIndex };
+pub const List = struct { elems: []const Index };
 
 pub const ListComp = struct {
-    expr: NodeIndex,
+    expr: Index,
     variable: []const u8,
-    iterable: NodeIndex,
+    iterable: Index,
 };
 
-pub const Map = struct { keys: []const NodeIndex, vals: []const NodeIndex };
+pub const Map = struct { keys: []const Index, vals: []const Index };
 
-pub const IndexExpr = struct { target: NodeIndex, index: NodeIndex };
+pub const IndexExpr = struct { target: Index, index: Index };
 
-pub const NodeIndexList = ArrayList(NodeIndex);
-pub const NodeIndex = u32;
+pub const IndexArrayList = ArrayList(Index);
+pub const Index = u32;
 
 pub const SelectorPred = enum {
     equal_pred,
@@ -662,7 +655,7 @@ test {
     var parser: Parser = try .init(&tokenizer, ta);
     var tree: Tree = undefined;
     defer tree.deinit(ta);
-    tree = parser.buildAst() catch |err| {
+    tree = parser.buildTree() catch |err| {
         const err_location = parser.current.location;
         std.debug.print(
             "Error at line {d}, column {d}: {s}\n",

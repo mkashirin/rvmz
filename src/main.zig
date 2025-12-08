@@ -15,8 +15,8 @@ pub fn main() !void {
 
     const source =
         // \\ 16 + 4 / [1, 2, 3][1];
-        // \\ [1, 2, 3][1];
-        \\ [1, 2, 3] + [4, 5, 6];
+        \\ [1, 2, [3, 4]];
+        // \\ [1, 2, 3] + [4, 5, 6];
         // \\ 1 + {"one": 1, "two": 2}["two"];
         // \\ 1 == 2;
         // \\ "2" + "2";
@@ -24,7 +24,7 @@ pub fn main() !void {
 
     var tokenizer: Tokenizer = .init(source);
     var parser: Parser = try .init(&tokenizer, gpa);
-    var tree = parser.buildAst() catch |err| {
+    var tree = parser.buildTree() catch |err| {
         const err_location = parser.current.location;
         std.debug.print(
             "Error at line {d}, column {d}: {s}\n",
@@ -46,6 +46,9 @@ pub fn main() !void {
     var interpreter: Interpreter = .init(tree, gpa);
     std.debug.print(
         "\n{any}\n{any}\n",
-        .{ tree.nodes[0], (try interpreter.visitNode(tree.indices[0])) },
+        .{
+            tree.nodes[0],
+            (try interpreter.visitNode(tree.indices[0])).list.elems[0],
+        },
     );
 }

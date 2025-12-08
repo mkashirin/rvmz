@@ -1,4 +1,5 @@
 // TODO: Finish binary equality evaluation.
+// TODO: Figure out, how to properly handle lists and maps.
 
 tree: Tree,
 gpa: Allocator,
@@ -23,18 +24,28 @@ const IValue = union(enum) {
     int: i64,
     string: []const u8,
     boolean: bool,
-    list: ast.List,
-    map: ast.Map,
+    list: List,
+    map: Map,
 };
+
+const List = struct { elems: []const *IValue };
+
+const Map = struct { keys: []const *IValue, vals: []const *IValue };
 
 pub fn visitNode(i: *Interpreter, index: NodeIndex) anyerror!IValue {
     const node: Node = i.tree.nodes[@intCast(index)];
-    const res: IValue = switch (node) {
+    const res: IValue = sw: switch (node) {
         .bin_expr => |bin_expr| try i.evalBinExpr(bin_expr),
         .index_expr => |index_expr| try i.evalIndexExpr(index_expr),
         .int => |int| .{ .int = int },
         .string => |string| .{ .string = string },
-        .list => |list| .{ .list = list },
+        .list => |list| {
+            const len = list.elems.len;
+            var elems = try i.gpa.alloc(*IValue, len);
+            for (0..len, list.elems) |j, elem| elems[j] =
+                @constCast(&try i.visitNode(elem));
+            break :sw .{ .list = .{ .elems = elems } };
+        },
         else => return error.UnsupportedNodeType,
     };
     return res;
@@ -102,7 +113,7 @@ fn evalAdd(
         ) },
         .list => .{ .list = .{ .elems = try std.mem.concat(
             gpa,
-            u32,
+            *IValue,
             &.{ lhs.list.elems, rhs.list.elems },
         ) } },
         else => return error.UnsupportedType,
@@ -240,4 +251,4 @@ const Allocator = std.mem.Allocator;
 const ast = @import("ast.zig");
 const Tree = ast.Tree;
 const Node = ast.Node;
-const NodeIndex = ast.NodeIndex;
+const NodeIndex = ast.Index;

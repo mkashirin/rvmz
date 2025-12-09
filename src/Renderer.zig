@@ -33,22 +33,22 @@ fn printIndented(
 
 fn renderNode(r: *Renderer, index: NodeIndex) std.Io.Writer.Error!void {
     try switch (r.nodes[@intCast(index)]) {
-        .boolean => |node| r.boolean(node),
-        .int => |node| r.int(node),
-        .string => |node| r.string(node),
-        .ident => |node| r.ident(node),
-        .bin_expr => |node| r.binExpr(node),
-        .cond_expr => |node| r.condExpr(node),
-        .assign_stmt => |node| r.assignStmt(node),
-        .fn_def => |node| r.fnDef(node),
-        .return_stmt => |node| r.returnStmt(node),
-        .fn_call => |node| r.fnCall(node),
-        .list => |node| r.list(node),
-        .list_comp => |node| r.listComp(node),
-        .map => |node| r.map(node),
-        .index_expr => |node| r.indexExpr(node),
-        .for_stmt => |node| r.forStmt(node),
-        .selector_pred => |pnode| r.selectorPred(pnode),
+        .boolean => |n| r.boolean(n),
+        .int => |n| r.int(n),
+        .string => |n| r.string(n),
+        .ident => |n| r.ident(n),
+        .bin_expr => |n| r.binExpr(n),
+        .cond_expr => |n| r.condExpr(n),
+        .assign_stmt => |n| r.assignStmt(n),
+        .fn_def => |n| r.fnDef(n),
+        .return_stmt => |n| r.returnStmt(n),
+        .fn_call => |n| r.fnCall(n),
+        .list => |n| r.list(n),
+        .list_comp => |n| r.listComp(n),
+        .map => |n| r.map(n),
+        .index_expr => |n| r.indexExpr(n),
+        .for_stmt => |n| r.forStmt(n),
+        .selector_pred => |n| r.selectorPred(n),
     };
 }
 
@@ -69,7 +69,7 @@ fn ident(r: *Renderer, node: []const u8) !void {
 }
 
 fn binExpr(r: *Renderer, node: ast.BinExpr) !void {
-    try r.printIndented("BinExpr({s}):", .{binOpLexeme(node.op)});
+    try r.printIndented("BinExpr({s}):", .{node.op.lexeme()});
     r.indent();
     defer r.unindent();
     try r.renderNode(node.lhs);
@@ -244,9 +244,7 @@ fn forStmt(r: *Renderer, node: ast.ForStmt) !void {
 }
 
 fn selectorPred(r: *Renderer, node: ast.SelectorPred) !void {
-    try r.printIndented("SelectorPred({s})", .{
-        selectorPredLexeme(node),
-    });
+    try r.printIndented("SelectorPred({s})", .{node.lexeme()});
     r.indent();
     defer r.unindent();
 }
@@ -261,5 +259,3 @@ const Allocator = std.mem.Allocator;
 const ast = @import("ast.zig");
 const Node = ast.Node;
 const NodeIndex = ast.Index;
-const binOpLexeme = ast.binOpLexeme;
-const selectorPredLexeme = ast.selectorPredLexeme;

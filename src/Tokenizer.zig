@@ -38,7 +38,7 @@ pub fn next(t: *Tokenizer) Token {
                 }
             }
             const lexeme = t.source[start..t.index];
-            if (Token.getKeyword(lexeme)) |tag|
+            if (Token.keyword(lexeme)) |tag|
                 break :sw tag
             else {
                 token.lexeme = lexeme;
@@ -97,23 +97,25 @@ pub const Token = struct {
     location: Location = undefined,
 
     pub const Tag = enum(u8) {
-        plus = '+',
-        minus = '-',
-        star = '*',
-        slash = '/',
-        carrot = '^',
-        left_paren = '(',
-        right_paren = ')',
-        left_bracket = '[',
-        right_bracket = ']',
-        left_brace = '{',
-        right_brace = '}',
-        comma = ',',
-        semicolon = ';',
-        colon = ':',
-        equal = '=',
-        less_than = '<',
-        greater_than = '>',
+        // zig fmt: off
+        plus            = '+',
+        minus           = '-',
+        star            = '*',
+        slash           = '/',
+        carrot          = '^',
+        left_paren      = '(',
+        right_paren     = ')',
+        left_bracket    = '[',
+        right_bracket   = ']',
+        left_brace      = '{',
+        right_brace     = '}',
+        comma           = ',',
+        semicolon       = ';',
+        colon           = ':',
+        equal           = '=',
+        less_than       = '<',
+        greater_than    = '>',
+        // zig fmt: on
 
         double_equal,
         bang_equal,
@@ -153,7 +155,7 @@ pub const Token = struct {
         .{ "in", .keyword_in },
     });
 
-    pub fn getKeyword(bytes: []const u8) ?Tag {
+    pub fn keyword(bytes: []const u8) ?Tag {
         return keywords_map.get(bytes);
     }
 };
@@ -175,8 +177,7 @@ fn step(t: *Tokenizer) void {
 }
 
 fn match(t: *Tokenizer, expected: u8) bool {
-    if (t.source[t.index] != expected) return false;
-    return true;
+    return t.source[t.index] == expected;
 }
 
 test {

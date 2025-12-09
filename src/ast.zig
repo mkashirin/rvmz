@@ -21,7 +21,7 @@ pub const Parser = struct {
 
     pub fn buildTree(self: *Self) Error!Tree {
         var indices_ = Indices.empty;
-        while (self.current.tag != .eof) {
+        while (self.match(.eof)) {
             const stmt_index = try self.stmt();
             try indices_.append(self.gpa, stmt_index);
         }
@@ -33,7 +33,7 @@ pub const Parser = struct {
     fn stmt(self: *Self) Error!Index {
         self.peek();
         return switch (self.current.tag) {
-            .ident => if (self.peeked.tag == .equal)
+            .ident => if (self.matchPeeked(.equal))
                 self.assignStmt()
             else
                 self.exprStmt(),
@@ -46,7 +46,7 @@ pub const Parser = struct {
 
     fn assignStmt(self: *Self) !Index {
         var variable = try self.condExpr();
-        if (self.current.tag != .equal) return variable;
+        if (!self.match(.equal)) return variable;
 
         const node = self.nodes.items[@intCast(variable)];
         switch (node) {
@@ -64,7 +64,7 @@ pub const Parser = struct {
                 self.step();
                 return variable;
             },
-            else => return Error.ExpectedExpression,
+            else => return Expected.Expression,
         }
     }
 
@@ -85,7 +85,7 @@ pub const Parser = struct {
             try args.append(self.gpa, arg);
             self.step();
 
-            if (self.current.tag == .right_paren) break;
+            if (self.match(.right_paren)) break;
             try self.expect(.comma);
             self.step();
         }
@@ -97,7 +97,7 @@ pub const Parser = struct {
         var body_nodes = Indices.empty;
         // TODO: If there is no right brace indeed, the location of the cause
         // would be bugged out. This needs to be fixed.
-        while (self.current.tag != .right_brace) {
+        while (!self.match(.right_brace)) {
             const stmt_index = try self.stmt();
             try body_nodes.append(self.gpa, stmt_index);
         }
@@ -138,7 +138,7 @@ pub const Parser = struct {
         self.step();
 
         var body_nodes = Indices.empty;
-        while (self.current.tag != .right_brace) {
+        while (!self.match(.right_brace)) {
             const stmt_index = try self.stmt();
             try body_nodes.append(self.gpa, stmt_index);
         }
@@ -165,7 +165,7 @@ pub const Parser = struct {
 
     fn condExpr(self: *Self) !Index {
         const then = try self.andOrInExpr();
-        if (self.current.tag != .keyword_if) return then;
+        if (!self.match(.keyword_if)) return then;
         self.step();
 
         const if_cond = try self.andOrInExpr();
@@ -264,14 +264,14 @@ pub const Parser = struct {
             .left_bracket => self.listLiteral(),
             .left_paren => self.boxedExpr(),
             .keyword_true, .keyword_false => self.boolLiteral(),
-            else => return Error.ExpectedExpression,
+            else => return Expected.Expression,
         };
         primary = try self.indexExpr(primary);
         return primary;
     }
 
     fn indexExpr(self: *Self, target: Index) !Index {
-        while (self.current.tag == .left_bracket) {
+        while (self.match(.left_bracket)) {
             self.step();
 
             const index = try self.expr();
@@ -292,7 +292,7 @@ pub const Parser = struct {
         const name = self.current.lexeme.?;
         self.step();
 
-        if (self.current.tag != .left_paren)
+        if (!self.match(.left_paren))
             return self.push(.{ .ident = name });
         self.step();
 
@@ -300,7 +300,7 @@ pub const Parser = struct {
         while (true) {
             const arg = self.expr() catch blk: {
                 if (!std.mem.eql(u8, name, "Select") or args.items.len != 2)
-                    return Error.ExpectedExpression;
+                    return Expected.SelectorPred;
 
                 const pred: SelectorPred = switch (self.current.tag) {
                     .double_equal => .equal_pred,
@@ -309,14 +309,14 @@ pub const Parser = struct {
                     .less_or_equal_than => .less_or_equal_than_pred,
                     .greater_than => .greater_than_pred,
                     .greater_or_equal_than => .greater_or_equal_than_pred,
-                    else => return Error.ExpectedSelectorPred,
+                    else => return Expected.SelectorPred,
                 };
                 self.step();
 
                 break :blk try self.push(.{ .selector_pred = pred });
             };
             try args.append(self.gpa, arg);
-            if (self.current.tag == .right_paren) break;
+            if (self.match(.right_paren)) break;
             try self.expect(.comma);
             self.step();
         }
@@ -355,12 +355,12 @@ pub const Parser = struct {
     fn listLiteral(self: *Self) !Index {
         self.step();
         const expr_ = try self.expr();
-        if (self.current.tag != .keyword_for) {
+        if (!self.match(.keyword_for)) {
             var elems = Indices.empty;
             try elems.append(self.gpa, expr_);
-            while (self.current.tag == .comma) {
+            while (self.match(.comma)) {
                 self.step();
-                if (self.current.tag == .right_bracket) break;
+                if (self.match(.right_bracket)) break;
                 const elem = try self.expr();
                 try elems.append(self.gpa, elem);
             }
@@ -400,7 +400,7 @@ pub const Parser = struct {
 
             const val = try self.expr();
             try vals.append(self.gpa, val);
-            if (self.current.tag == .right_brace) break;
+            if (self.match(.right_brace)) break;
             try self.expect(.comma);
             self.step();
         }
@@ -435,47 +435,56 @@ pub const Parser = struct {
         self.peeked = self.tokenizer.peek();
     }
 
-    fn expect(self: *Self, tag: Tag) !void {
-        if (self.current.tag != tag) return switch (tag) {
-            .ident => Error.ExpectedIdentifier,
+    fn match(self: *Self, expected: Tag) bool {
+        return self.current.tag == expected;
+    }
 
-            .left_paren => Error.ExpectedLeftParen,
-            .right_paren => Error.ExpectedRightParen,
-            .right_bracket => Error.ExpectedRightBracket,
-            .left_brace => Error.ExpectedLeftBrace,
-            .right_brace => Error.ExpectedRightBrace,
-            .comma => Error.ExpectedComma,
-            .semicolon => Error.ExpectedSemicolon,
-            .colon => Error.ExpectedColon,
+    fn matchPeeked(self: *Self, expected: Tag) bool {
+        return self.peeked.tag == expected;
+    }
 
-            .keyword_def => Error.ExpectedKeywordDef,
-            .keyword_in => Error.ExpectedKeywordIn,
-            .keyword_else => Error.ExpectedKeywordElse,
+    fn expect(self: *Self, expected: Tag) Expected!void {
+        if (self.current.tag != expected) return switch (expected) {
+            // zig fmt: off
+            .ident          => Expected.Identifier,
+            .left_paren     => Expected.LeftParen,
+            .right_paren    => Expected.RightParen,
+            .right_bracket  => Expected.RightBracket,
+            .left_brace     => Expected.LeftBrace,
+            .right_brace    => Expected.RightBrace,
+            .comma          => Expected.Comma,
+            .semicolon      => Expected.Semicolon,
+            .colon          => Expected.Colon,
 
-            else => Error.ExpectedToken,
+            .keyword_def    => Expected.KeywordDef,
+            .keyword_in     => Expected.KeywordIn,
+            .keyword_else   => Expected.KeywordElse,
+
+            else            => Expected.Token,
+            // zig fmt: on
         };
     }
 };
 
-pub const Error = Allocator.Error || fmt.ParseIntError || ParseError;
-const ParseError = error{
-    ExpectedIdentifier,
-    ExpectedLeftParen,
-    ExpectedRightParen,
-    ExpectedRightBracket,
-    ExpectedLeftBrace,
-    ExpectedRightBrace,
-    ExpectedComma,
-    ExpectedSemicolon,
-    ExpectedColon,
+pub const Error = Allocator.Error || fmt.ParseIntError || Expected;
+const Expected = error{
+    Identifier,
+    LeftParen,
+    RightParen,
+    RightBracket,
+    LeftBrace,
+    RightBrace,
+    Comma,
+    Semicolon,
+    Colon,
 
-    ExpectedKeywordDef,
-    ExpectedKeywordIn,
-    ExpectedKeywordElse,
+    KeywordDef,
+    KeywordIn,
+    KeywordElse,
 
-    ExpectedSelectorPred,
-    ExpectedExpression,
-    ExpectedToken,
+    SelectorPred,
+    Expression,
+    Token,
 };
 
 pub const Tree = struct {
@@ -484,19 +493,22 @@ pub const Tree = struct {
     const Self = @This();
 
     pub fn deinit(self: *Self, gpa: Allocator) void {
-        gpa.free(self.indices);
-        for (self.nodes) |node| switch (node) {
-            .fn_call => |fn_call| gpa.free(fn_call.args),
-            .fn_def => |fn_def| inline for (.{ "args", "body" }) |field_name|
-                gpa.free(@field(fn_def, field_name)),
-            .for_stmt => |for_stmt| gpa.free(for_stmt.body),
-            .list => |list| gpa.free(list.elems),
-            .map => |map| inline for (.{ "keys", "values" }) |field_name|
-                gpa.free(@field(map, field_name)),
-            else => {},
-        };
-        gpa.free(self.nodes);
-        self.* = undefined;
+        defer self.* = undefined;
+        defer gpa.free(self.nodes);
+        defer gpa.free(self.indices);
+
+        for (self.nodes) |node| {
+            switch (node) {
+                .fn_call => |n| gpa.free(n.args),
+                .list => |n| gpa.free(n.elems),
+                .for_stmt => |n| gpa.free(n.body),
+                .fn_def => |n| inline for (.{ n.args, n.body }) |s|
+                    gpa.free(s),
+                .map => |n| inline for (.{ n.keys, n.values }) |s| gpa.free(s),
+
+                else => {},
+            }
+        }
     }
 };
 
@@ -521,27 +533,6 @@ pub const Node = union(enum) {
 
 pub const BinExpr = struct { lhs: Index, op: BinOp, rhs: Index };
 
-pub fn binOpLexeme(bin_op: BinOp) []const u8 {
-    return switch (bin_op) {
-        .add => "+",
-        .subtr => "-",
-        .mult => "*",
-        .power => "^",
-        .div => "/",
-
-        .equal => "==",
-        .not_equal => "!=",
-        .greater_than => ">",
-        .greater_or_equal_than => ">=",
-        .less_than => "<",
-        .less_or_equal_than => "<=",
-
-        .logic_and => "and",
-        .logic_or => "or",
-        .is_in => "in",
-    };
-}
-
 pub const BinOp = enum {
     add,
     subtr,
@@ -557,18 +548,30 @@ pub const BinOp = enum {
     logic_and,
     logic_or,
     is_in,
-};
 
-pub fn selectorPredLexeme(pred: SelectorPred) []const u8 {
-    return switch (pred) {
-        .equal_pred => "==",
-        .not_equal_pred => "!=",
-        .less_than_pred => "<",
-        .less_or_equal_than_pred => "<=",
-        .greater_than_pred => ">",
-        .greater_or_equal_than_pred => ">=",
-    };
-}
+    pub fn lexeme(self: @This()) []const u8 {
+        return lexeme_map.get(self);
+    }
+
+    const lexeme_map: std.enums.EnumArray(@This(), []const u8) = .init(.{
+        // zig fmt: off
+        .add                    = "+",
+        .subtr                  = "-",
+        .mult                   = "*",
+        .power                  = "^",
+        .div                    = "/",
+        .equal                  = "==",
+        .not_equal              = "!=",
+        .greater_than           = ">",
+        .greater_or_equal_than  = ">=",
+        .less_than              = "<",
+        .less_or_equal_than     = "<=",
+        .logic_and              = "and",
+        .logic_or               = "or",
+        .is_in                  = "in",
+        // zig fmt: on
+    });
+};
 
 pub const FnCall = struct { name: []const u8, args: []const Index };
 
@@ -615,6 +618,21 @@ pub const SelectorPred = enum {
     less_or_equal_than_pred,
     greater_than_pred,
     greater_or_equal_than_pred,
+
+    pub fn lexeme(self: @This()) []const u8 {
+        return lexeme_map.get(self);
+    }
+
+    const lexeme_map = std.enums.EnumArray(@This(), []const u8).init(.{
+        // zig fmt: off
+        .equal_pred                 = "==",
+        .not_equal_pred             = "!=",
+        .less_than_pred             = "<",
+        .less_or_equal_than_pred    = "<=",
+        .greater_than_pred          = ">",
+        .greater_or_equal_than_pred = ">=",
+        // zig fmt: on
+    });
 };
 
 test {

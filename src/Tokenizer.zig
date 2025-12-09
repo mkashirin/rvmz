@@ -12,94 +12,28 @@ pub fn deinit(t: *Tokenizer) void {
     t.* = undefined;
 }
 
-pub fn peekNext(t: *Tokenizer) Token {
-    const current = .{ t.index, t.line, t.column };
+pub fn peek(t: *Tokenizer) Token {
+    const init_pos = .{ t.index, t.line, t.column };
     const token = t.next();
-    t.index, t.line, t.column = current;
+    t.index, t.line, t.column = init_pos;
     return token;
 }
 
 pub fn next(t: *Tokenizer) Token {
     var token: Token = .{ .tag = .invalid };
     t.skipWhitespaces();
-    if (t.index >= t.source.len) {
+    if (t.index >= t.source.len)
         return .{ .tag = .eof, .lexeme = "EOF" };
-    }
     const start = t.index;
-    const char = t.step().?;
+    const current = t.source[t.index];
+    t.step();
 
-    token.tag = sw: switch (char) {
-        '+' => .plus,
-        '-' => .minus,
-        '*' => .star,
-        '/' => .slash,
-        '^' => .carrot,
-
-        '(' => .left_paren,
-        ')' => .right_paren,
-        '[' => .left_bracket,
-        ']' => .right_bracket,
-        '{' => .left_brace,
-        '}' => .right_brace,
-        ',' => .comma,
-        ';' => .semicolon,
-        ':' => .colon,
-
-        '=' => switch (t.source[t.index]) {
-            '=' => {
-                _ = t.step();
-                break :sw .double_equal;
-            },
-            else => .equal,
-        },
-        '!' => switch (t.source[t.index]) {
-            '=' => {
-                _ = t.step();
-                break :sw .bang_equal;
-            },
-            else => .invalid,
-        },
-        '<' => switch (t.source[t.index]) {
-            '=' => {
-                _ = t.step();
-                break :sw .less_or_equal_than;
-            },
-            else => .less_than,
-        },
-        '>' => switch (t.source[t.index]) {
-            '=' => {
-                _ = t.step();
-                break :sw .greater_or_equal_than;
-            },
-            else => .greater_than,
-        },
-
-        '"' => {
-            _ = t.step();
-            while (t.index < t.source.len and
-                t.source[t.index] != '"') _ = t.step();
-            _ = t.step();
-            token.lexeme = t.source[start + 1 .. t.index - 1];
-            break :sw .string_literal;
-        },
-
-        '0'...'9' => {
-            while (t.index < t.source.len) {
-                const digit = t.source[t.index];
-                switch (digit) {
-                    '0'...'9' => _ = t.step(),
-                    else => break,
-                }
-            }
-            token.lexeme = t.source[start..t.index];
-            break :sw .int_literal;
-        },
-
+    token.tag = sw: switch (current) {
         'a'...'z', 'A'...'Z', '_' => {
             while (t.index < t.source.len) {
                 const sub = t.source[t.index];
                 switch (sub) {
-                    'a'...'z', 'A'...'Z', '0'...'9', '_' => _ = t.step(),
+                    'a'...'z', 'A'...'Z', '0'...'9', '_' => t.step(),
                     else => break,
                 }
             }
@@ -112,8 +46,47 @@ pub fn next(t: *Tokenizer) Token {
             }
         },
 
-        else => .invalid,
+        '0'...'9' => {
+            while (t.index < t.source.len) {
+                const digit = t.source[t.index];
+                switch (digit) {
+                    '0'...'9' => t.step(),
+                    else => break,
+                }
+            }
+            token.lexeme = t.source[start..t.index];
+            break :sw .int_literal;
+        },
+
+        '"' => {
+            t.step();
+            while (t.index < t.source.len and
+                t.source[t.index] != '"') t.step();
+            t.step();
+            token.lexeme = t.source[start + 1 .. t.index - 1];
+            break :sw .string_literal;
+        },
+
+        '=' => if (t.match('=')) {
+            t.step();
+            break :sw .double_equal;
+        } else .equal,
+        '!' => if (t.match('=')) {
+            t.step();
+            break :sw .bang_equal;
+        } else .invalid,
+        '<' => if (t.match('=')) {
+            t.step();
+            break :sw .less_or_equal_than;
+        } else .less_than,
+        '>' => if (t.match('=')) {
+            t.step();
+            break :sw .greater_or_equal_than;
+        } else .greater_than,
+
+        else => |c| std.enums.fromInt(Token.Tag, c) orelse .invalid,
     };
+
     token.location = .{ .line = t.line, .column = t.column };
     return token;
 }
@@ -123,27 +96,28 @@ pub const Token = struct {
     lexeme: ?[]const u8 = null,
     location: Location = undefined,
 
-    pub const Tag = enum {
-        plus,
-        minus,
-        star,
-        slash,
-        carrot,
-        left_paren,
-        right_paren,
-        left_bracket,
-        right_bracket,
-        left_brace,
-        right_brace,
-        comma,
-        semicolon,
-        colon,
-        equal,
+    pub const Tag = enum(u8) {
+        plus = '+',
+        minus = '-',
+        star = '*',
+        slash = '/',
+        carrot = '^',
+        left_paren = '(',
+        right_paren = ')',
+        left_bracket = '[',
+        right_bracket = ']',
+        left_brace = '{',
+        right_brace = '}',
+        comma = ',',
+        semicolon = ';',
+        colon = ':',
+        equal = '=',
+        less_than = '<',
+        greater_than = '>',
+
         double_equal,
         bang_equal,
-        less_than,
         less_or_equal_than,
-        greater_than,
         greater_or_equal_than,
 
         eof,
@@ -166,19 +140,18 @@ pub const Token = struct {
 
     pub const Location = struct { line: usize, column: usize };
 
-    pub const keywords_map: @import("std").StaticStringMap(Tag) =
-        .initComptime(.{
-            .{ "true", .keyword_true },
-            .{ "false", .keyword_false },
-            .{ "and", .keyword_and },
-            .{ "or", .keyword_or },
-            .{ "if", .keyword_if },
-            .{ "else", .keyword_else },
-            .{ "def", .keyword_def },
-            .{ "return", .keyword_return },
-            .{ "for", .keyword_for },
-            .{ "in", .keyword_in },
-        });
+    pub const keywords_map: std.StaticStringMap(Tag) = .initComptime(.{
+        .{ "true", .keyword_true },
+        .{ "false", .keyword_false },
+        .{ "and", .keyword_and },
+        .{ "or", .keyword_or },
+        .{ "if", .keyword_if },
+        .{ "else", .keyword_else },
+        .{ "def", .keyword_def },
+        .{ "return", .keyword_return },
+        .{ "for", .keyword_for },
+        .{ "in", .keyword_in },
+    });
 
     pub fn getKeyword(bytes: []const u8) ?Tag {
         return keywords_map.get(bytes);
@@ -194,16 +167,20 @@ fn skipWhitespaces(t: *Tokenizer) void {
     }
 }
 
-fn step(t: *Tokenizer) ?u8 {
-    if (t.index >= t.source.len) return null;
-    const char = t.source[t.index];
-    if (char == '\n')
+fn step(t: *Tokenizer) void {
+    if (t.match('\n'))
         t.column, t.line = .{ 1, t.line + 1 }
-    else if (char == '\t') t.column += 8 else t.column += 1;
+    else if (t.match('\t')) t.column += 8 else t.column += 1;
     t.index += 1;
-    return char;
+}
+
+fn match(t: *Tokenizer, expected: u8) bool {
+    if (t.source[t.index] != expected) return false;
+    return true;
 }
 
 test {
     _ = @import("Tokenizer.zig");
 }
+
+const std = @import("std");

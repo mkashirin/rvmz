@@ -60,7 +60,7 @@ fn evalIndexExpr(i: *Interpreter, node: ast.IndexExpr) !IValue {
                 const index = try i.visitNode(map.keys[j]);
                 const keys_match =
                     try evalEqual(meta.activeTag(key), key, index);
-                if (keys_match.boolean) return try i.visitNode(map.vals[j]);
+                if (keys_match.boolean) return try i.visitNode(map.values[j]);
             }
             return error.NoSuchKey;
         },

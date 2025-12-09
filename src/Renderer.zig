@@ -192,13 +192,13 @@ fn map(r: *Renderer, node: ast.Map) !void {
     defer r.unindent();
 
     const keys_end = node.keys.len;
-    const values_end = node.vals.len;
+    const values_end = node.values.len;
     for (0..keys_end, 0..values_end) |i, j| {
         try r.printIndented("Pair:", .{});
         r.indent();
         defer r.unindent();
         try r.renderNode(node.keys[i]);
-        try r.renderNode(node.vals[j]);
+        try r.renderNode(node.values[j]);
     }
 }
 

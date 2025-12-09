@@ -9,7 +9,7 @@ pub const Parser = struct {
     pub fn init(tokenizer: *Tokenizer, gpa: Allocator) !Self {
         var self: Self = .{ .tokenizer = tokenizer, .gpa = gpa };
         self.step();
-        self.peekNext();
+        self.peek();
         return self;
     }
 
@@ -20,7 +20,7 @@ pub const Parser = struct {
     }
 
     pub fn buildTree(self: *Self) Error!Tree {
-        var indices_ = IndexArrayList.empty;
+        var indices_ = Indices.empty;
         while (self.current.tag != .eof) {
             const stmt_index = try self.stmt();
             try indices_.append(self.gpa, stmt_index);
@@ -31,12 +31,12 @@ pub const Parser = struct {
     }
 
     fn stmt(self: *Self) Error!Index {
-        self.peekNext();
+        self.peek();
         return switch (self.current.tag) {
-            .ident => switch (self.peeked.tag) {
-                .equal => self.assignStmt(),
-                else => self.exprStmt(),
-            },
+            .ident => if (self.peeked.tag == .equal)
+                self.assignStmt()
+            else
+                self.exprStmt(),
             .keyword_def => self.fnDef(),
             .keyword_return => self.returnStmt(),
             .keyword_for => self.forStmt(),
@@ -59,8 +59,8 @@ pub const Parser = struct {
                     .value = value,
                 };
 
-                variable = try self.pushNode(.{ .assign_stmt = assign_stmt });
-                try self.expectToken(.semicolon);
+                variable = try self.push(.{ .assign_stmt = assign_stmt });
+                try self.expect(.semicolon);
                 self.step();
                 return variable;
             },
@@ -69,32 +69,32 @@ pub const Parser = struct {
     }
 
     fn fnDef(self: *Self) !Index {
-        try self.expectToken(.keyword_def);
+        try self.expect(.keyword_def);
         self.step();
 
-        try self.expectToken(.ident);
+        try self.expect(.ident);
         const name = self.current.lexeme.?;
         self.step();
 
-        try self.expectToken(.left_paren);
+        try self.expect(.left_paren);
         self.step();
-        var args = IndexArrayList.empty;
+        var args = Indices.empty;
         while (true) {
-            try self.expectToken(.ident);
-            const arg = try self.pushNode(.{ .ident = self.current.lexeme.? });
+            try self.expect(.ident);
+            const arg = try self.push(.{ .ident = self.current.lexeme.? });
             try args.append(self.gpa, arg);
             self.step();
 
             if (self.current.tag == .right_paren) break;
-            try self.expectToken(.comma);
+            try self.expect(.comma);
             self.step();
         }
         self.step();
 
-        try self.expectToken(.left_brace);
+        try self.expect(.left_brace);
         self.step();
 
-        var body_nodes = IndexArrayList.empty;
+        var body_nodes = Indices.empty;
         // TODO: If there is no right brace indeed, the location of the cause
         // would be bugged out. This needs to be fixed.
         while (self.current.tag != .right_brace) {
@@ -108,36 +108,36 @@ pub const Parser = struct {
             .args = try args.toOwnedSlice(self.gpa),
             .body = try body_nodes.toOwnedSlice(self.gpa),
         };
-        const res = self.pushNode(.{ .fn_def = fn_def });
+        const res = self.push(.{ .fn_def = fn_def });
         return res;
     }
 
     fn returnStmt(self: *Self) !Index {
         self.step();
         const value = try self.expr();
-        try self.expectToken(.semicolon);
+        try self.expect(.semicolon);
 
         self.step();
         const return_stmt: ReturnStmt = .{ .value = value };
-        return self.pushNode(.{ .return_stmt = return_stmt });
+        return self.push(.{ .return_stmt = return_stmt });
     }
 
     fn forStmt(self: *Self) !Index {
-        try self.expectToken(.keyword_for);
+        try self.expect(.keyword_for);
         self.step();
 
-        try self.expectToken(.ident);
+        try self.expect(.ident);
         const var_name = self.current.lexeme.?;
         self.step();
 
-        try self.expectToken(.keyword_in);
+        try self.expect(.keyword_in);
         self.step();
 
         const iterable = try self.expr();
-        try self.expectToken(.left_brace);
+        try self.expect(.left_brace);
         self.step();
 
-        var body_nodes = IndexArrayList.empty;
+        var body_nodes = Indices.empty;
         while (self.current.tag != .right_brace) {
             const stmt_index = try self.stmt();
             try body_nodes.append(self.gpa, stmt_index);
@@ -149,12 +149,12 @@ pub const Parser = struct {
             .iterable = iterable,
             .body = try body_nodes.toOwnedSlice(self.gpa),
         };
-        return self.pushNode(.{ .for_stmt = for_stmt });
+        return self.push(.{ .for_stmt = for_stmt });
     }
 
     fn exprStmt(self: *Self) Error!Index {
         const res = self.expr();
-        try self.expectToken(.semicolon);
+        try self.expect(.semicolon);
         self.step();
         return res;
     }
@@ -169,7 +169,7 @@ pub const Parser = struct {
         self.step();
 
         const if_cond = try self.andOrInExpr();
-        try self.expectToken(.keyword_else);
+        try self.expect(.keyword_else);
         self.step();
 
         const else_expr = try self.andOrInExpr();
@@ -178,7 +178,7 @@ pub const Parser = struct {
             .if_cond = if_cond,
             .else_expr = else_expr,
         };
-        return self.pushNode(.{ .cond_expr = cond_expr });
+        return self.push(.{ .cond_expr = cond_expr });
     }
 
     fn andOrInExpr(self: *Self) !Index {
@@ -194,7 +194,7 @@ pub const Parser = struct {
 
             const rhs = try self.comparisonExpr();
             const bin_expr: BinExpr = .{ .lhs = lhs, .op = op, .rhs = rhs };
-            lhs = try self.pushNode(.{ .bin_expr = bin_expr });
+            lhs = try self.push(.{ .bin_expr = bin_expr });
         }
         return lhs;
     }
@@ -215,7 +215,7 @@ pub const Parser = struct {
 
             const rhs = try self.addSubtrExpr();
             const bin_expr: BinExpr = .{ .lhs = lhs, .op = op, .rhs = rhs };
-            lhs = try self.pushNode(.{ .bin_expr = bin_expr });
+            lhs = try self.push(.{ .bin_expr = bin_expr });
         }
         return lhs;
     }
@@ -232,7 +232,7 @@ pub const Parser = struct {
 
             const rhs = try self.multDivPowExpr();
             const bin_expr: BinExpr = .{ .lhs = lhs, .op = op, .rhs = rhs };
-            lhs = try self.pushNode(.{ .bin_expr = bin_expr });
+            lhs = try self.push(.{ .bin_expr = bin_expr });
         }
         return lhs;
     }
@@ -250,7 +250,7 @@ pub const Parser = struct {
 
             const rhs = try self.multDivPowExpr();
             const bin_expr: BinExpr = .{ .lhs = lhs, .op = op, .rhs = rhs };
-            lhs = try self.pushNode(.{ .bin_expr = bin_expr });
+            lhs = try self.push(.{ .bin_expr = bin_expr });
         }
         return lhs;
     }
@@ -275,11 +275,11 @@ pub const Parser = struct {
             self.step();
 
             const index = try self.expr();
-            try self.expectToken(.right_bracket);
+            try self.expect(.right_bracket);
             self.step();
 
             const index_expr: IndexExpr = .{ .target = target, .index = index };
-            return self.pushNode(.{ .index_expr = index_expr });
+            return self.push(.{ .index_expr = index_expr });
         }
         return target;
     }
@@ -293,10 +293,10 @@ pub const Parser = struct {
         self.step();
 
         if (self.current.tag != .left_paren)
-            return self.pushNode(.{ .ident = name });
+            return self.push(.{ .ident = name });
         self.step();
 
-        var args = IndexArrayList.empty;
+        var args = Indices.empty;
         while (true) {
             const arg = self.expr() catch blk: {
                 if (!std.mem.eql(u8, name, "Select") or args.items.len != 2)
@@ -313,11 +313,11 @@ pub const Parser = struct {
                 };
                 self.step();
 
-                break :blk try self.pushNode(.{ .selector_pred = pred });
+                break :blk try self.push(.{ .selector_pred = pred });
             };
             try args.append(self.gpa, arg);
             if (self.current.tag == .right_paren) break;
-            try self.expectToken(.comma);
+            try self.expect(.comma);
             self.step();
         }
         self.step();
@@ -325,27 +325,27 @@ pub const Parser = struct {
             .name = name,
             .args = try args.toOwnedSlice(self.gpa),
         };
-        return self.pushNode(.{ .fn_call = call });
+        return self.push(.{ .fn_call = call });
     }
 
     fn intLiteral(self: *Self) !Index {
         const int = try fmt.parseInt(i64, self.current.lexeme.?, 10);
-        const index = try self.pushNode(.{ .int = int });
+        const index = try self.push(.{ .int = int });
         self.step();
         return index;
     }
 
     fn stringLiteral(self: *Self) !Index {
         const string = self.current.lexeme.?;
-        const index = try self.pushNode(.{ .string = string });
+        const index = try self.push(.{ .string = string });
         self.step();
         return index;
     }
 
     fn boolLiteral(self: *Self) !Index {
         const index = switch (self.current.tag) {
-            .keyword_true => self.pushNode(.{ .boolean = true }),
-            .keyword_false => self.pushNode(.{ .boolean = false }),
+            .keyword_true => self.push(.{ .boolean = true }),
+            .keyword_false => self.push(.{ .boolean = false }),
             else => unreachable,
         };
         self.step();
@@ -356,7 +356,7 @@ pub const Parser = struct {
         self.step();
         const expr_ = try self.expr();
         if (self.current.tag != .keyword_for) {
-            var elems = IndexArrayList.empty;
+            var elems = Indices.empty;
             try elems.append(self.gpa, expr_);
             while (self.current.tag == .comma) {
                 self.step();
@@ -367,52 +367,52 @@ pub const Parser = struct {
             self.step();
 
             const list: List = .{ .elems = try elems.toOwnedSlice(self.gpa) };
-            return self.pushNode(.{ .list = list });
+            return self.push(.{ .list = list });
         }
 
         self.step();
-        try self.expectToken(.ident);
+        try self.expect(.ident);
         const variable = self.current.lexeme.?;
         self.step();
 
-        try self.expectToken(.keyword_in);
+        try self.expect(.keyword_in);
         self.step();
 
         const iterable = try self.expr();
-        try self.expectToken(.right_bracket);
+        try self.expect(.right_bracket);
         self.step();
         const list_comp: ListComp = .{
             .expr = expr_,
             .variable = variable,
             .iterable = iterable,
         };
-        return self.pushNode(.{ .list_comp = list_comp });
+        return self.push(.{ .list_comp = list_comp });
     }
 
-    fn mapLiteral(p: *Self) !Index {
-        p.step();
-        var keys, var vals = .{ IndexArrayList.empty, IndexArrayList.empty };
+    fn mapLiteral(self: *Self) !Index {
+        self.step();
+        var keys, var vals = .{ Indices.empty, Indices.empty };
         while (true) {
-            const key = try p.expr();
-            try keys.append(p.gpa, key);
-            try p.expectToken(.colon);
-            p.step();
+            const key = try self.expr();
+            try keys.append(self.gpa, key);
+            try self.expect(.colon);
+            self.step();
 
-            const val = try p.expr();
-            try vals.append(p.gpa, val);
-            if (p.current.tag == .right_brace) break;
-            try p.expectToken(.comma);
-            p.step();
+            const val = try self.expr();
+            try vals.append(self.gpa, val);
+            if (self.current.tag == .right_brace) break;
+            try self.expect(.comma);
+            self.step();
         }
-        p.step();
+        self.step();
         const map: Map = .{
-            .keys = try keys.toOwnedSlice(p.gpa),
-            .vals = try vals.toOwnedSlice(p.gpa),
+            .keys = try keys.toOwnedSlice(self.gpa),
+            .values = try vals.toOwnedSlice(self.gpa),
         };
-        return p.pushNode(.{ .map = map });
+        return self.push(.{ .map = map });
     }
 
-    fn pushNode(self: *Self, node: Node) Allocator.Error!Index {
+    fn push(self: *Self, node: Node) Allocator.Error!Index {
         try self.nodes.append(self.gpa, node);
         const index: Index = @intCast(self.nodes.items.len - 1);
         return index;
@@ -421,7 +421,7 @@ pub const Parser = struct {
     fn boxedExpr(self: *Self) !Index {
         self.step();
         const index = try self.expr();
-        try self.expectToken(.right_paren);
+        try self.expect(.right_paren);
 
         self.step();
         return index;
@@ -431,11 +431,11 @@ pub const Parser = struct {
         self.current = self.tokenizer.next();
     }
 
-    fn peekNext(self: *Self) void {
-        self.peeked = self.tokenizer.peekNext();
+    fn peek(self: *Self) void {
+        self.peeked = self.tokenizer.peek();
     }
 
-    fn expectToken(self: *Self, tag: Tag) !void {
+    fn expect(self: *Self, tag: Tag) !void {
         if (self.current.tag != tag) return switch (tag) {
             .ident => Error.ExpectedIdentifier,
 
@@ -491,7 +491,7 @@ pub const Tree = struct {
                 gpa.free(@field(fn_def, field_name)),
             .for_stmt => |for_stmt| gpa.free(for_stmt.body),
             .list => |list| gpa.free(list.elems),
-            .map => |map| inline for (.{ "keys", "vals" }) |field_name|
+            .map => |map| inline for (.{ "keys", "values" }) |field_name|
                 gpa.free(@field(map, field_name)),
             else => {},
         };
@@ -601,11 +601,11 @@ pub const ListComp = struct {
     iterable: Index,
 };
 
-pub const Map = struct { keys: []const Index, vals: []const Index };
+pub const Map = struct { keys: []const Index, values: []const Index };
 
 pub const IndexExpr = struct { target: Index, index: Index };
 
-pub const IndexArrayList = ArrayList(Index);
+pub const Indices = ArrayList(Index);
 pub const Index = u32;
 
 pub const SelectorPred = enum {

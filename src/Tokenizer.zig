@@ -75,14 +75,14 @@ pub fn next(t: *Tokenizer) Token {
             t.step();
             break :sw .bang_equal;
         } else .invalid,
-        '<' => if (t.match('=')) {
-            t.step();
-            break :sw .less_or_equal_than;
-        } else .less_than,
         '>' => if (t.match('=')) {
             t.step();
             break :sw .greater_or_equal_than;
         } else .greater_than,
+        '<' => if (t.match('=')) {
+            t.step();
+            break :sw .less_or_equal_than;
+        } else .less_than,
 
         else => |c| std.enums.fromInt(Token.Tag, c) orelse .invalid,
     };
@@ -98,11 +98,12 @@ pub const Token = struct {
 
     pub const Tag = enum(u8) {
         // zig fmt: off
-        plus            = '+',
-        minus           = '-',
-        star            = '*',
-        slash           = '/',
-        carrot          = '^',
+        plus    = '+',
+        minus   = '-',
+        star    = '*',
+        slash   = '/',
+        carrot  = '^',
+
         left_paren      = '(',
         right_paren     = ')',
         left_bracket    = '[',
@@ -113,6 +114,7 @@ pub const Token = struct {
         semicolon       = ';',
         colon           = ':',
         equal           = '=',
+
         less_than       = '<',
         greater_than    = '>',
         // zig fmt: on
@@ -142,7 +144,7 @@ pub const Token = struct {
 
     pub const Location = struct { line: usize, column: usize };
 
-    pub const keywords_map: std.StaticStringMap(Tag) = .initComptime(.{
+    pub const keywords: std.StaticStringMap(Tag) = .initComptime(.{
         .{ "true", .keyword_true },
         .{ "false", .keyword_false },
         .{ "and", .keyword_and },
@@ -156,7 +158,7 @@ pub const Token = struct {
     });
 
     pub fn keyword(bytes: []const u8) ?Tag {
-        return keywords_map.get(bytes);
+        return keywords.get(bytes);
     }
 };
 
@@ -176,8 +178,8 @@ fn step(t: *Tokenizer) void {
     t.index += 1;
 }
 
-fn match(t: *Tokenizer, expected: u8) bool {
-    return t.source[t.index] == expected;
+fn match(t: *Tokenizer, character: u8) bool {
+    return t.source[t.index] == character;
 }
 
 test {

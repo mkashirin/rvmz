@@ -81,16 +81,18 @@ fn evalBinExpr(i: *Interpreter, node: ast.BinExpr) anyerror!IValue {
     const f = switch (node.op) {
         .add => return evalAdd(i.gpa, lhs_type, lhs, rhs),
 
-        .subtr => &evalSubtr,
-        .mult => &evalMult,
-        .power => &evalPower,
-        .div => &evalDiv,
-        .equal => &evalEqual,
-        .not_equal => &evalNotEqual,
-        .greater_than => &evalGreaterThan,
-        .greater_or_equal_than => &evalGreaterOrEqualThan,
-        .less_than => &evalLessThan,
-        .less_or_equal_than => &evalLessOrEqualThan,
+        // zig fmt: off
+        .subtr                  => &evalSubtr,
+        .mult                   => &evalMult,
+        .power                  => &evalPower,
+        .div                    => &evalDiv,
+        .equal                  => &evalEqual,
+        .not_equal              => &evalNotEqual,
+        .greater_than           => &evalGreaterThan,
+        .greater_or_equal_than  => &evalGreaterOrEqualThan,
+        .less_than              => &evalLessThan,
+        .less_or_equal_than     => &evalLessOrEqualThan,
+        // zig fmt: on
 
         else => return error.UnsupportedOperation,
     };

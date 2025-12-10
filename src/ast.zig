@@ -1,9 +1,12 @@
+// TODO: Test new Diagnostic method properly.
+
 pub const Parser = struct {
     tokenizer: *Tokenizer,
     gpa: Allocator,
     current: Token = undefined,
-    peeked: Token = undefined,
+    upcoming: Token = undefined,
     nodes: ArrayList(Node) = .empty,
+    diagnostic: ?Diagnostic = null,
     const Self = @This();
 
     pub fn init(tokenizer: *Tokenizer, gpa: Allocator) !Self {
@@ -21,7 +24,7 @@ pub const Parser = struct {
 
     pub fn buildTree(self: *Self) Error!Tree {
         var indices_ = Indices.empty;
-        while (self.match(.eof)) {
+        while (!self.match(.eof)) {
             const stmt_index = try self.stmt();
             try indices_.append(self.gpa, stmt_index);
         }
@@ -33,7 +36,7 @@ pub const Parser = struct {
     fn stmt(self: *Self) Error!Index {
         self.peek();
         return switch (self.current.tag) {
-            .ident => if (self.matchPeeked(.equal))
+            .ident => if (self.matchUpcoming(.equal))
                 self.assignStmt()
             else
                 self.exprStmt(),
@@ -42,6 +45,10 @@ pub const Parser = struct {
             .keyword_for => self.forStmt(),
             else => self.exprStmt(),
         };
+    }
+
+    fn peek(self: *Self) void {
+        self.upcoming = self.tokenizer.peek();
     }
 
     fn assignStmt(self: *Self) !Index {
@@ -64,7 +71,7 @@ pub const Parser = struct {
                 self.step();
                 return variable;
             },
-            else => return Expected.Expression,
+            else => return self.fail(.{ .description = "expression" }),
         }
     }
 
@@ -105,7 +112,7 @@ pub const Parser = struct {
 
         const fn_def: FnDef = .{
             .name = name,
-            .args = try args.toOwnedSlice(self.gpa),
+            .def_args = try args.toOwnedSlice(self.gpa),
             .body = try body_nodes.toOwnedSlice(self.gpa),
         };
         const res = self.push(.{ .fn_def = fn_def });
@@ -205,10 +212,11 @@ pub const Parser = struct {
             const op: BinOp = switch (self.current.tag) {
                 .double_equal => .equal,
                 .bang_equal => .not_equal,
-                .less_than => .less_than,
-                .less_or_equal_than => .less_or_equal_than,
                 .greater_than => .greater_than,
                 .greater_or_equal_than => .greater_or_equal_than,
+                .less_than => .less_than,
+                .less_or_equal_than => .less_or_equal_than,
+
                 else => break,
             };
             self.step();
@@ -263,8 +271,9 @@ pub const Parser = struct {
             .left_brace => self.mapLiteral(),
             .left_bracket => self.listLiteral(),
             .left_paren => self.boxedExpr(),
+
             .keyword_true, .keyword_false => self.boolLiteral(),
-            else => return Expected.Expression,
+            else => self.fail(.{ .description = "expression" }),
         };
         primary = try self.indexExpr(primary);
         return primary;
@@ -300,20 +309,21 @@ pub const Parser = struct {
         while (true) {
             const arg = self.expr() catch blk: {
                 if (!std.mem.eql(u8, name, "Select") or args.items.len != 2)
-                    return Expected.SelectorPred;
+                    return self.fail(.{ .description = "bin comp" });
 
-                const pred: SelectorPred = switch (self.current.tag) {
-                    .double_equal => .equal_pred,
-                    .bang_equal => .not_equal_pred,
-                    .less_than => .less_than_pred,
-                    .less_or_equal_than => .less_or_equal_than_pred,
-                    .greater_than => .greater_than_pred,
-                    .greater_or_equal_than => .greater_or_equal_than_pred,
-                    else => return Expected.SelectorPred,
+                const bin_arg: BinOp = switch (self.current.tag) {
+                    .double_equal => .equal,
+                    .bang_equal => .not_equal,
+                    .greater_than => .greater_than,
+                    .greater_or_equal_than => .greater_or_equal_than,
+                    .less_than => .less_than,
+                    .less_or_equal_than => .less_or_equal_than,
+
+                    else => return self.fail(.{ .description = "bin comp" }),
                 };
                 self.step();
 
-                break :blk try self.push(.{ .selector_pred = pred });
+                break :blk try self.push(.{ .bin_arg = bin_arg });
             };
             try args.append(self.gpa, arg);
             if (self.match(.right_paren)) break;
@@ -323,7 +333,7 @@ pub const Parser = struct {
         self.step();
         const call: FnCall = .{
             .name = name,
-            .args = try args.toOwnedSlice(self.gpa),
+            .call_args = try args.toOwnedSlice(self.gpa),
         };
         return self.push(.{ .fn_call = call });
     }
@@ -391,15 +401,15 @@ pub const Parser = struct {
 
     fn mapLiteral(self: *Self) !Index {
         self.step();
-        var keys, var vals = .{ Indices.empty, Indices.empty };
+        var keys, var values = .{ Indices.empty, Indices.empty };
         while (true) {
             const key = try self.expr();
             try keys.append(self.gpa, key);
             try self.expect(.colon);
             self.step();
 
-            const val = try self.expr();
-            try vals.append(self.gpa, val);
+            const value = try self.expr();
+            try values.append(self.gpa, value);
             if (self.match(.right_brace)) break;
             try self.expect(.comma);
             self.step();
@@ -407,7 +417,7 @@ pub const Parser = struct {
         self.step();
         const map: Map = .{
             .keys = try keys.toOwnedSlice(self.gpa),
-            .values = try vals.toOwnedSlice(self.gpa),
+            .values = try values.toOwnedSlice(self.gpa),
         };
         return self.push(.{ .map = map });
     }
@@ -431,61 +441,36 @@ pub const Parser = struct {
         self.current = self.tokenizer.next();
     }
 
-    fn peek(self: *Self) void {
-        self.peeked = self.tokenizer.peek();
+    fn match(self: *Self, tag: Tag) bool {
+        return self.current.tag == tag;
     }
 
-    fn match(self: *Self, expected: Tag) bool {
-        return self.current.tag == expected;
+    fn matchUpcoming(self: *Self, tag: Tag) bool {
+        return self.upcoming.tag == tag;
     }
 
-    fn matchPeeked(self: *Self, expected: Tag) bool {
-        return self.peeked.tag == expected;
+    fn expect(self: *Self, tag: Tag) Error!void {
+        const tag_ = self.current.tag;
+        if (tag_ != tag) return self.fail(.{ .tag = tag });
     }
 
-    fn expect(self: *Self, expected: Tag) Expected!void {
-        if (self.current.tag != expected) return switch (expected) {
-            // zig fmt: off
-            .ident          => Expected.Identifier,
-            .left_paren     => Expected.LeftParen,
-            .right_paren    => Expected.RightParen,
-            .right_bracket  => Expected.RightBracket,
-            .left_brace     => Expected.LeftBrace,
-            .right_brace    => Expected.RightBrace,
-            .comma          => Expected.Comma,
-            .semicolon      => Expected.Semicolon,
-            .colon          => Expected.Colon,
-
-            .keyword_def    => Expected.KeywordDef,
-            .keyword_in     => Expected.KeywordIn,
-            .keyword_else   => Expected.KeywordElse,
-
-            else            => Expected.Token,
-            // zig fmt: on
-        };
+    fn fail(self: *Self, expected: Diagnostic.Expected) Error {
+        self.diagnostic = .{ .expected = expected, .found = self.current };
+        return Error.SyntaxParseError;
     }
 };
 
-pub const Error = Allocator.Error || fmt.ParseIntError || Expected;
-const Expected = error{
-    Identifier,
-    LeftParen,
-    RightParen,
-    RightBracket,
-    LeftBrace,
-    RightBrace,
-    Comma,
-    Semicolon,
-    Colon,
-
-    KeywordDef,
-    KeywordIn,
-    KeywordElse,
-
-    SelectorPred,
-    Expression,
-    Token,
+pub const Diagnostic = struct {
+    expected: Expected,
+    found: Token,
+    pub const Expected = union(enum) {
+        tag: Tag,
+        description: []const u8,
+    };
 };
+
+pub const Error = Allocator.Error || fmt.ParseIntError ||
+    error{SyntaxParseError};
 
 pub const Tree = struct {
     indices: []const u32,
@@ -499,13 +484,15 @@ pub const Tree = struct {
 
         for (self.nodes) |node| {
             switch (node) {
-                .fn_call => |n| gpa.free(n.args),
-                .list => |n| gpa.free(n.elems),
-                .for_stmt => |n| gpa.free(n.body),
-                .fn_def => |n| inline for (.{ n.args, n.body }) |s|
-                    gpa.free(s),
-                .map => |n| inline for (.{ n.keys, n.values }) |s| gpa.free(s),
-
+                .fn_call => |fn_call| gpa.free(fn_call.call_args),
+                .list => |list| gpa.free(list.elems),
+                .for_stmt => |for_stmt| gpa.free(for_stmt.body),
+                .fn_def => |fn_def| inline for (.{
+                    fn_def.def_args,
+                    fn_def.body,
+                }) |arr| gpa.free(arr),
+                .map => |map| inline for (.{ map.keys, map.values }) |arr|
+                    gpa.free(arr),
                 else => {},
             }
         }
@@ -528,7 +515,7 @@ pub const Node = union(enum) {
     map: Map,
     index_expr: IndexExpr,
     for_stmt: ForStmt,
-    selector_pred: SelectorPred,
+    bin_arg: BinOp,
 };
 
 pub const BinExpr = struct { lhs: Index, op: BinOp, rhs: Index };
@@ -539,41 +526,20 @@ pub const BinOp = enum {
     mult,
     power,
     div,
+
     equal,
     not_equal,
     greater_than,
     greater_or_equal_than,
     less_than,
     less_or_equal_than,
+
     logic_and,
     logic_or,
     is_in,
-
-    pub fn lexeme(self: @This()) []const u8 {
-        return lexeme_map.get(self);
-    }
-
-    const lexeme_map: std.enums.EnumArray(@This(), []const u8) = .init(.{
-        // zig fmt: off
-        .add                    = "+",
-        .subtr                  = "-",
-        .mult                   = "*",
-        .power                  = "^",
-        .div                    = "/",
-        .equal                  = "==",
-        .not_equal              = "!=",
-        .greater_than           = ">",
-        .greater_or_equal_than  = ">=",
-        .less_than              = "<",
-        .less_or_equal_than     = "<=",
-        .logic_and              = "and",
-        .logic_or               = "or",
-        .is_in                  = "in",
-        // zig fmt: on
-    });
 };
 
-pub const FnCall = struct { name: []const u8, args: []const Index };
+pub const FnCall = struct { name: []const u8, call_args: []const Index };
 
 pub const CondExpr = struct {
     then: Index,
@@ -584,7 +550,7 @@ pub const AssignStmt = struct { name: []const u8, value: Index };
 
 pub const FnDef = struct {
     name: []const u8,
-    args: []const Index,
+    def_args: []const Index,
     body: []const Index,
 };
 
@@ -610,30 +576,6 @@ pub const IndexExpr = struct { target: Index, index: Index };
 
 pub const Indices = ArrayList(Index);
 pub const Index = u32;
-
-pub const SelectorPred = enum {
-    equal_pred,
-    not_equal_pred,
-    less_than_pred,
-    less_or_equal_than_pred,
-    greater_than_pred,
-    greater_or_equal_than_pred,
-
-    pub fn lexeme(self: @This()) []const u8 {
-        return lexeme_map.get(self);
-    }
-
-    const lexeme_map = std.enums.EnumArray(@This(), []const u8).init(.{
-        // zig fmt: off
-        .equal_pred                 = "==",
-        .not_equal_pred             = "!=",
-        .less_than_pred             = "<",
-        .less_or_equal_than_pred    = "<=",
-        .greater_than_pred          = ">",
-        .greater_or_equal_than_pred = ">=",
-        // zig fmt: on
-    });
-};
 
 test {
     const source =
@@ -672,22 +614,24 @@ test {
     var tokenizer: Tokenizer = .init(source);
     var parser: Parser = try .init(&tokenizer, ta);
     var tree: Tree = undefined;
-    defer tree.deinit(ta);
     tree = parser.buildTree() catch |err| {
         const err_location = parser.current.location;
+        const diagnostic = parser.diagnostic.?;
         std.debug.print(
-            "Error at line {d}, column {d}: {s}\n",
-            .{ err_location.line, err_location.column, @errorName(err) },
+            "Error at line {d}, column {d}: {any}\n",
+            .{ err_location.line, err_location.column, diagnostic },
         );
         parser.deinit();
         return err;
     };
+    tree.deinit(ta);
 }
 
 const std = @import("std");
 const fmt = std.fmt;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
+const EnumArray = std.enums.EnumArray;
 
 const Tokenizer = @import("Tokenizer.zig");
 const Token = Tokenizer.Token;

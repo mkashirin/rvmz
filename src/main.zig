@@ -15,7 +15,7 @@ pub fn main() !void {
 
     const source =
         // \\ 16 + 4 / [1, 2, 3][1];
-        \\ [1, 2, [3, 4]];
+        \\ [1, 2, 3];
         // \\ [1, 2, 3] + [4, 5, 6];
         // \\ 1 + {"one": 1, "two": 2}["two"];
         // \\ 1 == 2;
@@ -26,13 +26,15 @@ pub fn main() !void {
     var parser: Parser = try .init(&tokenizer, gpa);
     var tree = parser.buildTree() catch |err| {
         const err_location = parser.current.location;
+        const diagnostic = parser.diagnostic.?;
         std.debug.print(
-            "Error at line {d}, column {d}: {s}\n",
-            .{ err_location.line, err_location.column, @errorName(err) },
+            "Error at line {d}, column {d}: {any}\n",
+            .{ err_location.line, err_location.column, diagnostic.expected },
         );
         parser.deinit();
         return err;
     };
+    std.debug.print("{any}\n", .{parser.nodes});
     defer tree.deinit(gpa);
 
     var buffer: [1024]u8 = undefined;
@@ -43,12 +45,12 @@ pub fn main() !void {
     std.debug.print("Parsed AST (index-backed):\n", .{});
     for (tree.indices) |node| try renderer.render(node);
 
-    var interpreter: Interpreter = .init(tree, gpa);
-    std.debug.print(
-        "\n{any}\n{any}\n",
-        .{
-            tree.nodes[0],
-            (try interpreter.visitNode(tree.indices[0])).list.elems[0],
-        },
-    );
+    // var interpreter: Interpreter = .init(tree, gpa);
+    // std.debug.print(
+    //     "\n{any}\n{any}\n",
+    //     .{
+    //         tree.nodes[0],
+    //         (try interpreter.visitNode(tree.indices[0])).list.elems[0],
+    //     },
+    // );
 }
